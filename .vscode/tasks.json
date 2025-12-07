@@ -1,0 +1,31 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-std=c++17",
+                "${workspaceFolder}/main.cpp",
+                "${workspaceFolder}/params/params.cpp",
+                "${workspaceFolder}/Hamiltonians/hamiltonian.cpp",
+                "${workspaceFolder}/DensityMatrix/Density.cpp",
+                "${workspaceFolder}/Hamiltonians/potential.cpp",
+                "${workspaceFolder}/Observables/observables.cpp",
+                "-I${workspaceFolder}",
+                "-I/usr/include",
+                "-I/usr/include/eigen3",
+                "-o",
+                "${workspaceFolder}/main"
+                ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        }
+    ]
+}
