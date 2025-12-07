@@ -32,11 +32,7 @@ int main() {
     Eigen::VectorXd xl_eig = Eigen::Map<Eigen::VectorXd>(p.xl_1D.data(),
                                                          p.xl_1D.size());
     cout << "\nxl_1D size = " << p.xl_1D.size() << endl;
-    for (auto v : p.xl_1D)
-        cout << v << " ";
-    cout << "\n";
 
-    cout << "Hc:\n" << Hc << endl;
 
     VectorXcd eigenvalues   = compute_eigenvalues(Hc);
     MatrixXcd eigenvectors  = compute_eigenvectors(Hc);

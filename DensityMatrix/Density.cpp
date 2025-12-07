@@ -107,40 +107,45 @@ MatrixC rho_l_space(const Eigen::MatrixXcd& U,
 // 5. RHS of dρ/dt — all matrices are MatrixC
 // -------------------------------------------------------------
 void TimeTonianSolver::operator()(
-        const vector<complex<double>> &rho_vec,
-        vector<complex<double>> &drho_dt_vec,
-        const double t) 
+    const std::vector<std::complex<double>> &rho_vec,
+    std::vector<std::complex<double>> &drho_dt_vec,
+    const double t)
 {
-    // reshape into preallocated rho_tmp
-    for(int i = 0; i < N; i++)
-        for(int j = 0; j < N; j++)
-            rho_tmp(i,j) = rho_vec[i*N + j];
+    // --- reshape rho_vec → rho_tmp ---
+    for (int i = 0, k = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j, ++k)
+            rho_tmp(i,j) = rho_vec[k];
 
-    // fetch potential, store in preallocated vector
-    Vext_tmp = get_potential(t);
+    // --- get diagonal potential Vext(t) ---
+    const Eigen::VectorXd Vext = get_potential(t);  // return by value is OK
 
-    // build diagonal V_tmp (preallocated)
-    V_tmp.setZero();
-    for(int i = 0; i < N; i++)
-        V_tmp(i,i) = complex<double>(Vext_tmp[i], 0.0);
+    // --- H_tmp = H0 (copy) ---
+    H_tmp = H0;
 
-    // H_tmp = H0 + V
-    H_tmp.noalias() = H0;
-    H_tmp.noalias() += V_tmp;
+    // --- add diagonal potential directly ---
+    for(int i = 0; i < N; ++i)
+        H_tmp(i,i) += std::complex<double>(Vext[i], 0.0);
 
-    // comm_tmp = Hρ - ρH
+    // --- commutator [H,ρ] ---
     comm_tmp.noalias() = H_tmp * rho_tmp;
     comm_tmp.noalias() -= rho_tmp * H_tmp;
 
-    // drho_dt_tmp = -i [H,ρ] - gamma/2 (ρ - rho0)
-    drho_dt_tmp.noalias() = -(complex<double>(0,1)) * comm_tmp;
-    drho_dt_tmp.noalias() -= (gamma / 2.0) * (rho_tmp - rho0);
+    const std::complex<double> minus_i(0.0, -1.0);
 
-    // flatten back into output vector
-    for(int i = 0; i < N; i++)
-        for(int j = 0; j < N; j++)
-            drho_dt_vec[i*N + j] = drho_dt_tmp(i,j);
+    // --- drho/dt = -i[H,ρ] - γ/2 (ρ - ρ0) ---
+    for(int i = 0, k = 0; i < N; ++i)
+        for(int j = 0; j < N; ++j, ++k)
+        {
+            std::complex<double> comm_val = comm_tmp(i,j);
+            std::complex<double> relax = rho_tmp(i,j) - rho0(i,j);
+
+            drho_dt_tmp(i,j) =
+                minus_i * comm_val - (gamma * 0.5) * relax;
+
+            drho_dt_vec[k] = drho_dt_tmp(i,j);
+        }
 }
+
 
 // -------------------------------------------------------------
 // 6. Time evolution — now using MatrixC everywhere

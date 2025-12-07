@@ -26,7 +26,7 @@
         
         mu = 0.0/au_eV;                     // Chemical potential
         // Physical parameters
-        N = 50;
+        N = 100;
         T = 100;
         t1 = -2.8/au_eV;
         t2 = t1;// + 0.5;

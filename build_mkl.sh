@@ -4,22 +4,20 @@
 #   BUILD SCRIPT — Eigen + Intel MKL + OpenMP + O3
 # ==========================================================
 
-# MKL root directory
 MKLROOT=/opt/intel/oneapi/mkl/latest
-ONEAPIROOT=/opt/intel/oneapi
 
-echo "⚡ Building ISA SIM with MKL acceleration..."
+echo "Building sim_mkl with MKL..."
 echo "MKLROOT = $MKLROOT"
 
 g++ \
   -O3 -march=native -funroll-loops -fopenmp \
+  -DEIGEN_USE_MKL_ALL \
   -I/usr/include/eigen3 \
   -I. \
   -Iparams \
-  -IObservables \
-  -IHamiltonians \
   -IDensityMatrix \
-  -I${MKLROOT}/include \
+  -IHamiltonians \
+  -IObservables \
   main.cpp \
   DensityMatrix/Density.cpp \
   Hamiltonians/hamiltonian.cpp \
@@ -37,8 +35,8 @@ g++ \
   -o sim_mkl
 
 if [ $? -eq 0 ]; then
-    echo "✅ MKL build successful!"
-    echo "Run with: ./sim_mkl"
+    echo "✅ MKL build successful. Run with: ./sim_mkl"
 else
-    echo "❌ MKL build FAILED."
+    echo "❌ MKL build failed."
 fi
+

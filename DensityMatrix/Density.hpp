@@ -31,24 +31,33 @@ struct RhoHistory {
 struct RhoObserver {
     int N;
     RhoHistory &hist;
+    int counter = 0;     // counts observer calls
+    int stride  = 200;   // print every 200 steps (adjust as needed)
 
-    RhoObserver(int N_, RhoHistory &h) : N(N_), hist(h) {}
+    RhoObserver(int N_, RhoHistory &h, int stride_ = 200)
+        : N(N_), hist(h), stride(stride_) {}
 
     void operator()(const std::vector<std::complex<double>> &rho_vec, double t) {
+        counter++;
+
         // store time
         hist.time.push_back(t);
 
         // store diagonal rho_ii(t)
         hist.diag.emplace_back(N);
-
-        // rho_vec is flattened as i*N + j
         for(int i = 0; i < N; ++i)
-            hist.diag.back()[i] = std::real(rho_vec[i * N + i]);  // rho_ii(t)
+            hist.diag.back()[i] = std::real(rho_vec[i*N + i]);
 
-        // minimal print so you can see solver progress
-        std::cout << "t = " << t << std::endl;
+        // ----- PRINT ONLY EVERY "stride" STEPS -----
+        /*
+        if (counter % stride == 0) {
+            double t_fs = t * 2.418884326505e-17 * 1e15; // au → fs
+            std::cout << "t = " << t_fs << " fs" << std::endl;
+        }
+        */
     }
 };
+
 
 // =====================================================
 // TimeTonian = RHS of Liouville-von Neumann equation
