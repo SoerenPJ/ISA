@@ -1,17 +1,19 @@
 #!/bin/bash
 
-# ==========================================================
-#   BUILD SCRIPT — Eigen + Intel MKL + OpenMP + O3
-# ==========================================================
-
 MKLROOT=/opt/intel/oneapi/mkl/latest
 
 echo "Building sim_mkl with MKL..."
 echo "MKLROOT = $MKLROOT"
 
+export MKL_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+
 g++ \
-  -O3 -march=native -funroll-loops -fopenmp \
+  -O3 -march=native -funroll-loops \
+  -ftree-vectorize -frename-registers \
+  -fopenmp \
   -DEIGEN_USE_MKL_ALL \
+  -DEIGEN_DONT_PARALLELIZE \
   -I/usr/include/eigen3 \
   -I. \
   -Iparams \
@@ -33,6 +35,7 @@ g++ \
   -lm \
   -ldl \
   -o sim_mkl
+
 
 if [ $? -eq 0 ]; then
     echo "✅ MKL build successful. Run with: ./sim_mkl"

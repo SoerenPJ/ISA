@@ -16,7 +16,9 @@ public:
 
     // generic dispatcher
     Eigen::VectorXd get_potential(double t, const string& mode) const;
-
+    
+    double vvR(double R) const;
+    Eigen::MatrixXd build_coulomb_matrix() const;
 private:
     const Params& p;
     

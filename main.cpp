@@ -23,10 +23,17 @@ using namespace boost::numeric::odeint;
 int main() {
 
     Params p;
+
+    //========SET SIMULATION PARAMETERS========
     p.spin_on = false;
     p.build_lattice();
-
+    
     Potential pot(p);
+    p.coulomb_on = false;
+    p.V_ee = pot.build_coulomb_matrix();     // Build Coulomb matrix
+
+    p.use_strict_solver = false;
+    string mode = "time_impulse";
 
     MatrixC Hc = TB_hamiltonian(p.N, p.t1, p.t2);
     Eigen::VectorXd xl_eig = Eigen::Map<Eigen::VectorXd>(p.xl_1D.data(),
@@ -67,13 +74,12 @@ int main() {
             fout << "\n";
         }
     }
-
+    
     cout << "\nStart simulation...\n";
 
     RhoHistory history;
 
-    p.use_strict_solver = false;
-    string mode = "sinus";
+    
 
     MatrixC rho_final =
         evolve_rho_over_time(rho_l, Hc, pot, mode, p, history);

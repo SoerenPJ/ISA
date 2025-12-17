@@ -20,12 +20,10 @@ using namespace boost::numeric::odeint;
 
 
 // -------------------------------------------------------------
-// USE ROW-MAJOR DENSITY MATRICES (boosts performance a lot)
-// -------------------------------------------------------------
 
 
 // -------------------------------------------------------------
-// 1. Eigenvalues  (unchanged)
+// 1. Eigenvalues  
 // -------------------------------------------------------------
 Eigen::VectorXcd compute_eigenvalues(const Eigen::MatrixXcd& H) {
     Eigen::ComplexEigenSolver<Eigen::MatrixXcd> solver(H);
@@ -49,7 +47,7 @@ Eigen::VectorXcd compute_eigenvalues(const Eigen::MatrixXcd& H) {
 }
 
 // -------------------------------------------------------------
-// 2. Eigenvectors (unchanged)
+// 2. Eigenvectors 
 // -------------------------------------------------------------
 Eigen::MatrixXcd compute_eigenvectors(const Eigen::MatrixXcd& H) {
     Eigen::ComplexEigenSolver<Eigen::MatrixXcd> solver(H);
@@ -106,6 +104,7 @@ MatrixC rho_l_space(const Eigen::MatrixXcd& U,
 // -------------------------------------------------------------
 // 5. RHS of dρ/dt — all matrices are MatrixC
 // -------------------------------------------------------------
+
 void TimeTonianSolver::operator()(
     const std::vector<std::complex<double>> &rho_vec,
     std::vector<std::complex<double>> &drho_dt_vec,
@@ -117,14 +116,38 @@ void TimeTonianSolver::operator()(
             rho_tmp(i,j) = rho_vec[k];
 
     // --- get diagonal potential Vext(t) ---
-    const Eigen::VectorXd Vext = get_potential(t);  // return by value is OK
+    const Eigen::VectorXd Vext = get_potential(t);
 
     // --- H_tmp = H0 (copy) ---
     H_tmp = H0;
 
-    // --- add diagonal potential directly ---
+    // --- add diagonal external potential ---
     for(int i = 0; i < N; ++i)
         H_tmp(i,i) += std::complex<double>(Vext[i], 0.0);
+
+    //==========================================================
+    //                 ELECTRON–ELECTRON (Hartree) TERM
+    //==========================================================
+    if (coulomb_on)
+    {
+        // Step 1: extract real diag(rho) (NO new allocation)
+        for (int i = 0; i < N; ++i)
+            rho_diag(i) = rho_tmp(i,i).real();
+
+        // Step 2: rho_l_ind = 2 * e * (rho_diag - rho0_diag)
+        rho_l_ind.noalias() = 2.0 * e_charge * (rho_diag - rho0_diag);
+
+        // Step 3: V_ind_vector = V_ee * rho_l_ind  (MKL GEMV)
+        V_ind_vector.noalias() = V_ee * rho_l_ind;
+
+        // Step 4: add induced potential to diagonal of Hamiltonian
+        for (int i = 0; i < N; ++i)
+            H_tmp(i,i) += std::complex<double>(
+                e_charge * V_ind_vector(i), 0.0
+            );
+    }
+
+    //==========================================================
 
     // --- commutator [H,ρ] ---
     comm_tmp.noalias() = H_tmp * rho_tmp;
@@ -132,7 +155,7 @@ void TimeTonianSolver::operator()(
 
     const std::complex<double> minus_i(0.0, -1.0);
 
-    // --- drho/dt = -i[H,ρ] - γ/2 (ρ - ρ0) ---
+    // --- drho/dt ---
     for(int i = 0, k = 0; i < N; ++i)
         for(int j = 0; j < N; ++j, ++k)
         {
@@ -150,11 +173,8 @@ void TimeTonianSolver::operator()(
 // -------------------------------------------------------------
 // 6. Time evolution — now using MatrixC everywhere
 // -------------------------------------------------------------
-MatrixC evolve_rho_over_time(
-    const MatrixC &rho_initial_l,
-    const MatrixC &Hc,
-    Potential &pot,
-    const std::string &mode,
+MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, Potential &pot, 
+    const std::string &mode, 
     const Params &p,
     RhoHistory &history)
 
@@ -170,7 +190,12 @@ MatrixC evolve_rho_over_time(
 
     TimeTonianSolver solver;
     solver.N     = N;
-    solver.H0    = Hc;               // ok: Hc remains column-major
+    solver.H0    = Hc;   
+    solver.coulomb_on = p.coulomb_on;                      // NEW
+    solver.V_ee       = p.V_ee;                            // NEW
+    solver.rho0_diag  = rho_initial_l.diagonal().real();   // NEW
+    solver.e_charge   = p.e;                               // NEW
+            
     solver.gamma = p.gamma;
     solver.rho0  = rho_initial_l;
 
@@ -181,6 +206,11 @@ MatrixC evolve_rho_over_time(
     solver.comm_tmp.resize(N, N);
     solver.drho_dt_tmp.resize(N, N);
     solver.Vext_tmp.resize(N);
+    
+    solver.rho_diag.resize(N);
+    solver.rho_l_ind.resize(N);
+    solver.V_ind_vector.resize(N);
+
 
     solver.rho_tmp.setZero();
     solver.V_tmp.setZero();

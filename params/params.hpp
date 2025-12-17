@@ -1,11 +1,13 @@
 #pragma once
 
+#include <Eigen/Dense>   // REQUIRED for Eigen::MatrixXd
 #include <vector>
-#include <array>  
+#include <array>
 #include <string>
 using namespace std;
+
 struct Params {
-    //Atomic units 
+    // Atomic units
     double au_eV; 
     double au_nm;
     double au_s;
@@ -27,11 +29,12 @@ struct Params {
     double au_c;
     int e;
 
-    // physical parameters
+    // Physical parameters
     double t0;
     double t1; 
     double t2; 
     double gamma;
+
     // Simulation parameters
     int N; 
     int T; 
@@ -43,28 +46,24 @@ struct Params {
     double a_tol; 
     double r_tol; 
 
-   
+    bool coulomb_on = false;    // turn on/off Coulomb Hartree term
+    Eigen::MatrixXd V_ee;       // Coulomb matrix (NxN)
 
-    //External filed parameters
+    // External field
     string potential_mode = "time_impulse";
     double au_omega;
     double au_omega_fourier;
-    
-    
 
     bool spin_on; 
     bool two_dim; 
 
-    //solver 
+    // Solver
     bool use_strict_solver = false;
 
+    // Lattice positions
+    vector<double> xl_1D;
+    vector<array<double, 2>> xl_2D;
 
-    // ==== Lattice positions ====
-    std::vector<double> xl_1D;
-    std::vector<std::array<double, 2>> xl_2D;
-
-    // build 
     Params();
-
     void build_lattice();
 };

@@ -26,11 +26,11 @@
         
         mu = 0.0/au_eV;                     // Chemical potential
         // Physical parameters
-        N = 100;
+        N = 50;
         T = 100;
         t1 = -2.8/au_eV;
         t2 = t1;// + 0.5;
-        spin_on = true;
+        spin_on = false;
         two_dim = false;
         
         
@@ -38,7 +38,7 @@
         Intensity = (1e13/au_kg) * (au_s*au_s*au_s);  // time pules = 1e13 ddf = 1e15
         E0 = sqrt((2 *M_PI* Intensity) / (au_c)); // Electric field amplitude
         
-        t_shift = 0.5 / au_fs;
+        t_shift = 200 / au_fs;
         sigma_gaus = 60.07/au_fs; 
         sigma_ddf = 0.01/au_fs;
 

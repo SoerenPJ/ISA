@@ -49,12 +49,12 @@ struct RhoObserver {
             hist.diag.back()[i] = std::real(rho_vec[i*N + i]);
 
         // ----- PRINT ONLY EVERY "stride" STEPS -----
-        /*
+        
         if (counter % stride == 0) {
             double t_fs = t * 2.418884326505e-17 * 1e15; // au → fs
             std::cout << "t = " << t_fs << " fs" << std::endl;
         }
-        */
+        
     }
 };
 
@@ -67,6 +67,10 @@ struct TimeTonianSolver {
     int N;
     MatrixC H0;
     std::function<Eigen::VectorXd(double)> get_potential;
+    bool coulomb_on;
+    Eigen::MatrixXd V_ee;
+    Eigen::VectorXd rho0_diag;    
+    double e_charge;
 
     double gamma;                  // relaxation rate
     MatrixC rho0;                  // equilibrium density matrix
@@ -77,6 +81,10 @@ struct TimeTonianSolver {
     MatrixC comm_tmp;
     MatrixC drho_dt_tmp;
     Eigen::VectorXd Vext_tmp;
+    Eigen::VectorXd rho_diag;       // size N
+    Eigen::VectorXd rho_l_ind;      // size N
+    Eigen::VectorXd V_ind_vector;   // size N
+
 
     void operator()(const std::vector<std::complex<double>> &rho_vec,
                     std::vector<std::complex<double>> &drho_dt_vec,
