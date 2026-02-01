@@ -5,7 +5,7 @@ two_dim = false
 
 [hamiltonian]
 t1 = -2.8
-t2 = -2.8
+t2 = -3.2 
 mu = 0.0
 gamma = 0.01
 
@@ -15,6 +15,7 @@ t_end = 500
 t0 = 0.0
 a_tol = 1e-6
 r_tol = 1e-8
+use_strict_solver = true
 
 [field]
 intensity = 1e13

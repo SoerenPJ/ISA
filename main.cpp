@@ -15,10 +15,33 @@
     #include <complex>
     #include <vector>
     #include <iomanip>
+    #include <filesystem>
+    #include <sstream>
+    #include <cstdint>
+    #include <iterator>
 
     using namespace std;
     using namespace Eigen;
     using namespace boost::numeric::odeint;
+
+    static std::string read_file_to_string(const std::filesystem::path& p)
+    {
+        std::ifstream in(p, std::ios::binary);
+        if (!in)
+            return {};
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+
+    // Stable 64-bit FNV-1a hash (good enough for folder naming)
+    static std::uint64_t fnv1a_64(std::string_view s)
+    {
+        std::uint64_t h = 14695981039346656037ull;
+        for (unsigned char c : s) {
+            h ^= static_cast<std::uint64_t>(c);
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
 
     int main(int argc, char** argv)
     {
@@ -33,14 +56,42 @@
         // ===========================
         // Load parameters from TOML
         // ===========================
+        const std::string config_path = argv[1];
+
         Params p;
-        p.load_from_toml(argv[1]);
+        p.load_from_toml(config_path);
         p.finalize();
 
         // ===========================
         // Simulation mode
         // ===========================
         string mode = "time_impulse";
+
+        // ===========================
+        // Output folder: Simulations/<timestamp>_<config-stem>/
+        // ===========================
+        namespace fs = std::filesystem;
+
+        const fs::path cfg_p = fs::path(config_path);
+        const std::string cfg_stem = cfg_p.stem().string();
+
+        // B) overwrite only if identical config:
+        // Use a deterministic folder name based on the input TOML file *contents*.
+        // If the TOML text is unchanged, it maps to the same folder and outputs are overwritten.
+        const std::string cfg_text = read_file_to_string(cfg_p);
+        const std::uint64_t cfg_hash = fnv1a_64(cfg_text);
+        std::ostringstream hhex;
+        hhex << std::hex << cfg_hash;
+
+        const fs::path out_dir = fs::path("Simulations") / (cfg_stem + "_" + hhex.str());
+        fs::create_directories(out_dir);
+
+        // copy input toml into the folder (so the simulation is reproducible)
+        try {
+            fs::copy_file(cfg_p, out_dir / "input.toml", fs::copy_options::overwrite_existing);
+        } catch (...) {
+            // non-fatal (e.g., relative path issues); continue
+        }
 
         // ===========================
         // Build potential and Coulomb
@@ -67,7 +118,7 @@
 
         // save eigenvalues
         {
-            ofstream fout("eigenvalues.txt");
+            ofstream fout(out_dir / "eigenvalues.txt");
             for (int i = 0; i < eigenvalues.size(); ++i)
                 fout << eigenvalues(i).real() << " "
                     << eigenvalues(i).imag() << "\n";
@@ -80,7 +131,7 @@
 
         // save rho0 in j-space
         {
-            ofstream fout("rho0_j_space.txt");
+            ofstream fout(out_dir / "rho0_j_space.txt");
             for (int i = 0; i < rho0.rows(); ++i) {
                 for (int j = 0; j < rho0.cols(); ++j)
                     fout << rho0(i,j).real() << " "
@@ -93,7 +144,7 @@
 
         // save rho0 in l-space
         {
-            ofstream fout("rho0_l_space.txt");
+            ofstream fout(out_dir / "rho0_l_space.txt");
             for (int i = 0; i < rho_l.rows(); ++i) {
                 for (int j = 0; j < rho_l.cols(); ++j)
                     fout << rho_l(i,j).real() << " "
@@ -112,11 +163,22 @@
         MatrixC rho_final =
             evolve_rho_over_time(rho_l, Hc, pot, mode, p, history);
 
+        // save final rho in j-space (site basis) as pairs: Re Im
+        {
+            ofstream fout(out_dir / "rho_j_space.txt");
+            for (int i = 0; i < rho_final.rows(); ++i) {
+                for (int j = 0; j < rho_final.cols(); ++j)
+                    fout << rho_final(i,j).real() << " "
+                         << rho_final(i,j).imag() << " ";
+                fout << "\n";
+            }
+        }
+
         // ===========================
         // Save dipole evolution
         // ===========================
         {
-            ofstream fout("dipole_time_evolution.txt");
+            ofstream fout(out_dir / "dipole_time_evolution.txt");
             fout << "# time   dipole_moment\n";
 
             for (size_t k = 0; k < history.time.size(); ++k) {
@@ -133,8 +195,10 @@
                 fout << history.time[k] << " " << dip << "\n";
             }
 
-            cout << "\nDipole moment saved to dipole_time_evolution.txt\n";
+            cout << "\nDipole moment saved to " << (out_dir / "dipole_time_evolution.txt") << "\n";
         }
+
+        cout << "All outputs saved under: " << out_dir << "\n";
 
         return 0;
     }

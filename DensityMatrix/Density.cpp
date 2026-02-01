@@ -36,10 +36,9 @@ void RhoObserver::operator()(
     const std::vector<std::complex<double>> &rho_vec,
     double t
 ) {
-    static size_t counter = 0;
+    // store every observer call (i.e., every integrator step)
     counter++;
 
-    // store data
     hist.time.push_back(t);
     hist.diag.emplace_back(N);
     for (int i = 0; i < N; ++i)

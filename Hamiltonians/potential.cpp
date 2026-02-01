@@ -97,6 +97,7 @@ double Potential::vvR(double R) const{
 Eigen::MatrixXd Potential::build_coulomb_matrix() const {
     Eigen::MatrixXd V = Eigen::MatrixXd::Zero(p.N, p.N);
 
+
     for (int i = 0; i < p.N; i++) {
         for (int j = 0; j < p.N; j++) {
 

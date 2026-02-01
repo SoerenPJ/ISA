@@ -15,6 +15,7 @@ g++ \
   -fopenmp \
   -DEIGEN_USE_MKL_ALL \
   -DEIGEN_DONT_PARALLELIZE \
+  -I${MKLROOT}/include \
   -I/usr/include/eigen3 \
   -I. \
   -Iparams \
