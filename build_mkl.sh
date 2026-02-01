@@ -9,6 +9,7 @@ export MKL_NUM_THREADS=8
 export OMP_NUM_THREADS=8
 
 g++ \
+  -std=c++20 \
   -O3 -march=native -funroll-loops \
   -ftree-vectorize -frename-registers \
   -fopenmp \
@@ -20,6 +21,7 @@ g++ \
   -IDensityMatrix \
   -IHamiltonians \
   -IObservables \
+  -Iexternal/toml++ \
   main.cpp \
   DensityMatrix/Density.cpp \
   Hamiltonians/hamiltonian.cpp \
@@ -36,10 +38,8 @@ g++ \
   -ldl \
   -o sim_mkl
 
-
 if [ $? -eq 0 ]; then
     echo "✅ MKL build successful. Run with: ./sim_mkl"
 else
     echo "❌ MKL build failed."
 fi
-

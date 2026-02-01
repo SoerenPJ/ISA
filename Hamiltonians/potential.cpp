@@ -101,7 +101,7 @@ Eigen::MatrixXd Potential::build_coulomb_matrix() const {
         for (int j = 0; j < p.N; j++) {
 
             if (i == j) {
-                V(i, j) = 10.0;   // DEFINE U HERE, not vvR(0)
+                V(i, j) = 1.0;   // DEFINE U HERE, not vvR(0)
                 continue;
             }
 

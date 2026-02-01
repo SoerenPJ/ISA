@@ -1,9 +1,7 @@
 #pragma once
-#include <eigen3/Eigen/Dense>
-# include <string>
+#include <Eigen/Dense>
+#include <string>
 #include "params/params.hpp"
-
-using namespace std;
 
 class Potential {
 public:
@@ -14,12 +12,11 @@ public:
     Eigen::VectorXd sinus_wave(double t) const;
     Eigen::VectorXd ddf(double t) const;
 
-    // generic dispatcher
-    Eigen::VectorXd get_potential(double t, const string& mode) const;
-    
+    Eigen::VectorXd get_potential(double t, const std::string& mode) const;
+
     double vvR(double R) const;
     Eigen::MatrixXd build_coulomb_matrix() const;
+
 private:
     const Params& p;
-    
 };

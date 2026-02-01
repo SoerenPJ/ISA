@@ -1,0 +1,32 @@
+[system]
+N = 50
+lattice_const = 0.142
+two_dim = false
+
+[hamiltonian]
+t1 = -2.8
+t2 = -2.8
+mu = 0.0
+gamma = 0.01
+
+[simulation]
+# Times are in femtoseconds (fs)
+dt = 0.2
+t_max = 100.0
+t0 = 0.0
+a_tol = 1e-4
+r_tol = 1e-6
+use_strict_solver = true
+
+[field]
+intensity = 1e13
+omega = 0.2
+t_shift = 20.0
+sigma_gaus = 6.0
+sigma_ddf = 0.01
+
+[thermo]
+T = 300
+
+[features]
+coulomb = false

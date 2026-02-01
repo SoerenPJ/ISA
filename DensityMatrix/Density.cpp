@@ -20,13 +20,47 @@ using namespace boost::numeric::odeint;
 
 
 // -------------------------------------------------------------
+RhoObserver::RhoObserver(
+    int N_,
+    RhoHistory &h,
+    TimeTonianSolver *s,
+    int stride_
+)
+    : N(N_), hist(h), solver(s), stride(stride_)
+{}
+// -------------------------------------------------------------
+// RhoObserver operator() IMPLEMENTATION
+// -------------------------------------------------------------
+// =============================================================
+void RhoObserver::operator()(
+    const std::vector<std::complex<double>> &rho_vec,
+    double t
+) {
+    static size_t counter = 0;
+    counter++;
+
+    // store data
+    hist.time.push_back(t);
+    hist.diag.emplace_back(N);
+    for (int i = 0; i < N; ++i)
+        hist.diag.back()[i] = std::real(rho_vec[i*N + i]);
+
+    // simple progress print
+    if (counter % 5000 == 0) {
+        double t_fs = t * 2.418884326505e-17 * 1e15;
+        std::cout << "\r t = " << t_fs << " fs" << std::flush;
+    }
+}
+
+
+
 
 
 // -------------------------------------------------------------
 // 1. Eigenvalues  
 // -------------------------------------------------------------
 Eigen::VectorXcd compute_eigenvalues(const Eigen::MatrixXcd& H) {
-    Eigen::ComplexEigenSolver<Eigen::MatrixXcd> solver(H);
+    Eigen::ComplexEigenSolver<Eigen::MatrixXcd> solver(H); //selfadjont eigen
 
     Eigen::VectorXcd eigvals = solver.eigenvalues();
     int N = eigvals.size();
@@ -121,6 +155,14 @@ void TimeTonianSolver::operator()(
     // --- H_tmp = H0 (copy) ---
     H_tmp = H0;
 
+
+    /* RHS call counter for debugging
+    static size_t rhs_calls = 0;
+    rhs_calls++;
+    if (rhs_calls % 10000 == 0)
+        std::cout << "RHS calls = " << rhs_calls << std::endl;
+    */
+
     // --- add diagonal external potential ---
     for(int i = 0; i < N; ++i)
         H_tmp(i,i) += std::complex<double>(Vext[i], 0.0);
@@ -128,24 +170,14 @@ void TimeTonianSolver::operator()(
     //==========================================================
     //                 ELECTRON–ELECTRON (Hartree) TERM
     //==========================================================
-    if (coulomb_on)
-    {
-        // Step 1: extract real diag(rho) (NO new allocation)
-        for (int i = 0; i < N; ++i)
-            rho_diag(i) = rho_tmp(i,i).real();
-
-        // Step 2: rho_l_ind = 2 * e * (rho_diag - rho0_diag)
-        rho_l_ind.noalias() = 2.0 * e_charge * (rho_diag - rho0_diag);
-
-        // Step 3: V_ind_vector = V_ee * rho_l_ind  (MKL GEMV)
-        V_ind_vector.noalias() = V_ee * rho_l_ind;
-
-        // Step 4: add induced potential to diagonal of Hamiltonian
-        for (int i = 0; i < N; ++i)
-            H_tmp(i,i) += std::complex<double>(
-                e_charge * V_ind_vector(i), 0.0
-            );
+   
+        if (coulomb_on) {
+            for (int i = 0; i < N; ++i)
+                H_tmp(i,i) += std::complex<double>(
+                e_charge * V_hartree_cached(i), 0.0
+        );
     }
+
 
     //==========================================================
 
@@ -210,6 +242,24 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.rho_diag.resize(N);
     solver.rho_l_ind.resize(N);
     solver.V_ind_vector.resize(N);
+    solver.V_hartree_cached.resize(N);
+    solver.V_hartree_cached.setZero();
+
+    if (solver.coulomb_on) {
+
+        // extract diagonal of initial rho
+        for (int i = 0; i < N; ++i)
+            solver.rho_diag(i) = std::real(rho_initial_l(i, i));
+
+        // rho_l_ind = 2 e (rho - rho0)
+        solver.rho_l_ind.noalias() =
+            2.0 * solver.e_charge *
+            (solver.rho_diag - solver.rho0_diag);
+
+        // V_hartree_cached = V_ee * rho_l_ind
+        solver.V_hartree_cached.noalias() =
+            solver.V_ee * solver.rho_l_ind;
+    }
 
 
     solver.rho_tmp.setZero();
@@ -222,7 +272,7 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
         return pot.get_potential(t, mode);
     };
 
-    RhoObserver observer(N, history);
+   RhoObserver observer(N, history, &solver);
 
     if(p.use_strict_solver) {
         typedef runge_kutta_dopri5<state_type> strict_stepper;

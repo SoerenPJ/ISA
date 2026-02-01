@@ -1,69 +1,88 @@
 #pragma once
 
-#include <Eigen/Dense>   // REQUIRED for Eigen::MatrixXd
+#include <Eigen/Dense>
 #include <vector>
 #include <array>
 #include <string>
-using namespace std;
 
-struct Params {
-    // Atomic units
-    double au_eV; 
-    double au_nm;
-    double au_s;
-    double au_fs; 
-    double au_kg;
-    double au_kB; 
-    double au_m;
-    double au_J;
-    double au_w;
-    double au_I;
-    double au_me;
+struct Params
+{
+    // ======================
+    // ---- CONSTANTS ----
+    // ======================
+    double au_eV, au_nm, au_s, au_fs, au_c;
+    double au_kg, au_kB, au_m, au_J, au_w, au_I, au_me;
     double alpha;
-    double au_mu_0;
-    double a;
-    double Intensity;
-    double E0; 
-    double mu;
     int au_hbar;
-    double au_c;
     int e;
 
-    // Physical parameters
-    double t0;
-    double t1; 
-    double t2; 
+    // ======================
+    // ---- SYSTEM (TOML) ----
+    // ======================
+    int N;
+    bool two_dim = false;
+    bool spin_on = false;
+
+    // ======================
+    // ---- HAMILTONIAN (TOML) ----
+    // ======================
+    double t1, t2;
+    double mu;
     double gamma;
 
-    // Simulation parameters
-    int N; 
-    int T; 
-    double t_end;
-    double t_shift;
-    double sigma_gaus; 
-    double sigma_ddf; 
+    // ======================
+    // ---- TIME (TOML) ----
+    // ======================
     double dt;
-    double a_tol; 
-    double r_tol; 
+    double t_end;
 
-    bool coulomb_on = false;    // turn on/off Coulomb Hartree term
-    Eigen::MatrixXd V_ee;       // Coulomb matrix (NxN)
-
-    // External field
-    string potential_mode = "time_impulse";
-    double au_omega;
-    double au_omega_fourier;
-
-    bool spin_on; 
-    bool two_dim; 
-
-    // Solver
+    // ======================
+    // ---- SOLVER ----
+    // ======================
     bool use_strict_solver = false;
+    double t0   = 0.0;
+    double a_tol = 1e-6;
+    double r_tol = 1e-8;
 
-    // Lattice positions
-    vector<double> xl_1D;
-    vector<array<double, 2>> xl_2D;
+    // ======================
+    // ---- FIELD (TOML) ----
+    // ======================
+    double Intensity;
+    double au_omega;
+    double t_shift;
+    double sigma_gaus;
+    double sigma_ddf;
 
+    // ======================
+    // ---- THERMO (TOML) ----
+    // ======================
+    int T;
+
+    // ======================
+    // ---- FEATURES (TOML) ----
+    // ======================
+    bool coulomb_on = false;
+
+    // ======================
+    // ---- DERIVED ----
+    // ======================
+    double a;          // lattice spacing (a.u.)
+    double E0;         // field amplitude
+    Eigen::MatrixXd V_ee;
+
+    // ======================
+    // ---- GEOMETRY ----
+    // ======================
+    std::vector<double> xl_1D;
+    std::vector<std::array<double,2>> xl_2D;
+
+    // ======================
+    // ---- API ----
+    // ======================
     Params();
+    void load_from_toml(const std::string& filename);
+    void finalize();
+
+private:
     void build_lattice();
 };

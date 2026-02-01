@@ -16,6 +16,8 @@ using MatrixC = Eigen::Matrix<
 // Forward declarations
 class Potential;
 class Params;
+struct TimeTonianSolver;   // <<< ADD THIS
+
 
 // =====================================================
 // Store time evolution of diagonal density elements
@@ -31,31 +33,14 @@ struct RhoHistory {
 struct RhoObserver {
     int N;
     RhoHistory &hist;
-    int counter = 0;     // counts observer calls
-    int stride  = 200;   // print every 200 steps (adjust as needed)
+    TimeTonianSolver *solver;
 
-    RhoObserver(int N_, RhoHistory &h, int stride_ = 200)
-        : N(N_), hist(h), stride(stride_) {}
+    int counter = 0;
+    int stride  = 200;
 
-    void operator()(const std::vector<std::complex<double>> &rho_vec, double t) {
-        counter++;
+    RhoObserver(int N_, RhoHistory &h, TimeTonianSolver *s, int stride_ = 200);
 
-        // store time
-        hist.time.push_back(t);
-
-        // store diagonal rho_ii(t)
-        hist.diag.emplace_back(N);
-        for(int i = 0; i < N; ++i)
-            hist.diag.back()[i] = std::real(rho_vec[i*N + i]);
-
-        // ----- PRINT ONLY EVERY "stride" STEPS -----
-        
-        if (counter % stride == 0) {
-            double t_fs = t * 2.418884326505e-17 * 1e15; // au → fs
-            std::cout << "t = " << t_fs << " fs" << std::endl;
-        }
-        
-    }
+    void operator()(const std::vector<std::complex<double>> &rho_vec, double t);
 };
 
 
@@ -81,9 +66,12 @@ struct TimeTonianSolver {
     MatrixC comm_tmp;
     MatrixC drho_dt_tmp;
     Eigen::VectorXd Vext_tmp;
+
+    //EEI_related
     Eigen::VectorXd rho_diag;       // size N
     Eigen::VectorXd rho_l_ind;      // size N
     Eigen::VectorXd V_ind_vector;   // size N
+    Eigen::VectorXd V_hartree_cached;     // size N
 
 
     void operator()(const std::vector<std::complex<double>> &rho_vec,
