@@ -10,6 +10,7 @@ g++ \
   -O3 -march=native -funroll-loops -fopenmp \
   -I /usr/include/eigen3 \
   -I . \
+  -I external/toml++ \
   -I DensityMatrix \
   -I Hamiltonians \
   -I Observables \
