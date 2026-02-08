@@ -1,5 +1,6 @@
 [system]
 N = 50
+lattice = "SSH"
 lattice_const = 0.142
 two_dim = false
 
@@ -15,13 +16,13 @@ t_end = 500
 t0 = 0.0
 a_tol = 1e-6
 r_tol = 1e-8
-use_strict_solver = true
+use_strict_solver = false
 
 [field]
 intensity = 1e13
 omega = 0.2
 t_shift = 200
-sigma_gaus = 60
+sigma_gaus = 60.07
 sigma_ddf = 0.01
 
 [features]

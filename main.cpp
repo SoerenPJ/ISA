@@ -63,9 +63,9 @@
         p.finalize();
 
         // ===========================
-        // Simulation mode
+        // Field mode (from TOML)
         // ===========================
-        string mode = "time_impulse";
+        string mode = p.field_mode;
 
         // ===========================
         // Output folder: Simulations/<timestamp>_<config-stem>/
@@ -94,6 +94,21 @@
         }
 
         // ===========================
+        // Save lattice points generated in C++
+        // ===========================
+        {
+            ofstream fout(out_dir / "lattice_points.txt");
+            fout << "# x y\n";
+            if (p.two_dim) {
+                for (const auto& r : p.xl_2D)
+                    fout << r[0] << " " << r[1] << "\n";
+            } else {
+                for (double x : p.xl_1D)
+                    fout << x << " 0\n";
+            }
+        }
+
+        // ===========================
         // Build potential and Coulomb
         // ===========================
         Potential pot(p);
@@ -103,10 +118,21 @@
         // ===========================
         // Build Hamiltonian
         // ===========================
-        MatrixC Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+        MatrixC Hc;
+        if (p.lattice == "graphene") {
+            Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1);
+        } else {
+            Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+        }
 
-        Eigen::VectorXd xl_eig =
-            Eigen::Map<Eigen::VectorXd>(p.xl_1D.data(), p.xl_1D.size());
+        Eigen::VectorXd xl_eig;
+        if (p.two_dim) {
+            xl_eig.resize(static_cast<int>(p.xl_2D.size()));
+            for (int i = 0; i < xl_eig.size(); ++i)
+                xl_eig[i] = p.xl_2D[i][0];
+        } else {
+            xl_eig = Eigen::Map<Eigen::VectorXd>(p.xl_1D.data(), p.xl_1D.size());
+        }
 
         cout << "\nxl_1D size = " << p.xl_1D.size() << endl;
 
@@ -195,7 +221,6 @@
                 fout << history.time[k] << " " << dip << "\n";
             }
 
-            cout << "\nDipole moment saved to " << (out_dir / "dipole_time_evolution.txt") << "\n";
         }
 
         cout << "All outputs saved under: " << out_dir << "\n";

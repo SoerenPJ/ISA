@@ -21,7 +21,7 @@ Eigen::VectorXd Potential::time_impulse(double t) const {
 
     double dt = t - p.t_shift;
     double env = std::exp(-(dt*dt) / ((p.sigma_gaus)*(p.sigma_gaus)));
-    double osc = std::sin(p.au_omega * dt);
+    double osc = std::sin(p.au_omega * dt + p.field_phase);
 
     for (int i = 0; i < p.N; ++i) {
         double x = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
@@ -34,7 +34,7 @@ Eigen::VectorXd Potential::time_impulse(double t) const {
 Eigen::VectorXd Potential::sinus_wave(double t) const {
     Eigen::VectorXd result(p.N);
 
-    double osc = std::sin(p.au_omega * t);
+    double osc = std::sin(p.au_omega * t + p.field_phase);
 
     for (int i = 0; i < p.N; ++i) {
         double x = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
@@ -51,7 +51,7 @@ Eigen::VectorXd Potential::ddf(double t) const {
 
     double val = 0.0;
     if (t < cutoff)
-        val = p.E0 * std::cos((0.1/27.2113834) * t);
+        val = p.E0 * std::cos(p.au_omega_ddf * t + p.field_phase);
 
     for (int i = 0; i < p.N; ++i) {
         double x = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];

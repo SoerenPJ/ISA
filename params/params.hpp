@@ -13,8 +13,8 @@ struct Params
     double au_eV, au_nm, au_s, au_fs, au_c;
     double au_kg, au_kB, au_m, au_J, au_w, au_I, au_me;
     double alpha;
-    int au_hbar;
-    int e;
+    int au_hbar, e;
+    
 
     // ======================
     // ---- SYSTEM (TOML) ----
@@ -22,7 +22,11 @@ struct Params
     int N;
     bool two_dim = false;
     bool spin_on = false;
-
+    std::string lattice = "chain";
+    std::string formation = "zigzag"; // "zigzag" | "armchair"
+    std::string formation_shape;  //rectangle | triangle
+    int size_x = 0;                             
+    int size_y = 0;
     // ======================
     // ---- HAMILTONIAN (TOML) ----
     // ======================
@@ -48,7 +52,10 @@ struct Params
     // ---- FIELD (TOML) ----
     // ======================
     double Intensity;
+    std::string field_mode = "time_impulse"; // "time_impulse" | "sinus" | "ddf"
+    double field_phase = 0.0;                // phase offset [rad]
     double au_omega;
+    double au_omega_ddf = 0.1 / 27.2113834;  // ddf omega (a.u.), default 0.1 eV
     double t_shift;
     double sigma_gaus;
     double sigma_ddf;
