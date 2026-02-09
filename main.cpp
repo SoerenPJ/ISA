@@ -203,6 +203,9 @@
         // ===========================
         // Save dipole evolution
         // ===========================
+        VectorXd time_vec(history.time.size());
+        VectorXd dipole_t(history.time.size());
+    
         {
             ofstream fout(out_dir / "dipole_time_evolution.txt");
             fout << "# time   dipole_moment\n";
@@ -212,16 +215,57 @@
                 MatrixC rho_t(p.N, p.N);
                 rho_t.setZero();
 
+
                 for (int i = 0; i < p.N; ++i)
                     rho_t(i, i) = history.diag[k][i];
 
                 double dip =
                     compute_dipole_moment(rho_t, rho_l, xl_eig, p.e);
-
+                time_vec[k] = history.time[k];
+                dipole_t[k] = dip;
                 fout << history.time[k] << " " << dip << "\n";
             }
 
         }
+
+        double dt = time_vec[1] - time_vec[0];
+        double T = time_vec(time_vec.size() - 1) - time_vec[0];
+        double domega = 2.0 * M_PI / T;
+        double omega_ny = M_PI / dt;
+        double omega_max = min(omega_ny, p.omega_cut_off);
+
+        int N_omega = static_cast<int>(omega_max / domega);
+
+        VectorXd omega_fourier(N_omega);
+        for (int i = 0; i < N_omega; ++i)
+            omega_fourier(i) = i * domega;
+
+        //save omega_fourier
+        {
+            ofstream fout(out_dir / "omega_fourier.txt");
+            for (int i = 0; i < omega_fourier.size(); ++i)
+                fout << omega_fourier(i) << "\n";
+        }
+
+        VectorXd sigma_ext; 
+        compute_sigma_ext(
+            dipole_t,
+            time_vec,
+            omega_fourier,
+            p.au_fs,
+            p.E0,
+            p.au_c,
+            p.sigma_ddf,
+            sigma_ext
+            );
+
+        // save sigma_ext
+        {
+            ofstream fout(out_dir / "sigma_ext.txt");
+            for (int i = 0; i < sigma_ext.size(); ++i)
+                fout << omega_fourier(i) << " " << sigma_ext(i) << "\n";
+        }
+
 
         cout << "All outputs saved under: " << out_dir << "\n";
 

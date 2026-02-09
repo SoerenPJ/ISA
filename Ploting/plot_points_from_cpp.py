@@ -25,7 +25,8 @@ def resolve_config_path(arg: str) -> Path:
 
 def simulation_dir_from_config(cfg_path: Path) -> Path:
     h = fnv1a_64(cfg_path.read_bytes())
-    return Path("Simulations") / f"{cfg_path.stem}_{h:016x}"
+    # Match C++: std::hex with no setw/setfill → unpadded hex
+    return Path("Simulations") / f"{cfg_path.stem}_{h:x}"
 
 def count_unique_points(pts: np.ndarray, decimals: int = 6) -> int:
     if pts.size == 0:

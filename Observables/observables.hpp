@@ -6,3 +6,18 @@ double compute_dipole_moment(
     const Eigen::MatrixXcd &rho0,
     const Eigen::VectorXd  &xl, int e
 );
+
+
+std::complex<double> trapezoid(const Eigen::VectorXd& t, const Eigen::VectorXcd& f);
+
+
+void compute_sigma_ext(
+    const Eigen::VectorXcd &dipole_t,
+    const Eigen::VectorXd &t,
+    const Eigen::VectorXd &omega_fourier,
+    double au_fs,
+    double E0,
+    double au_c,
+    double sigma_ddf,
+    Eigen::VectorXd &sigma_ext
+);

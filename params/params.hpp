@@ -59,6 +59,7 @@ struct Params
     double t_shift;
     double sigma_gaus;
     double sigma_ddf;
+    double omega_cut_off;
 
     // ======================
     // ---- THERMO (TOML) ----

@@ -1,9 +1,10 @@
 [system]
 lattice = "graphene"
-formation_shape = "triangle" 
-formation = "armchair"
+formation_shape = "triangle" # rectangle | triangle
+formation = "zigzag"
 size_x = 2
 size_y = 2
+
 # bond length (nm)
 lattice_const = 0.142
 
@@ -11,19 +12,19 @@ lattice_const = 0.142
 t1 = -2.8
 t2 = -2.8
 mu = 0.0
-gamma = 0.01
+gamma = 0.05
 
 [simulation]
 use_strict_solver = false
 dt = 0.2
 t0 = 0.0
 t_max = 500.0
-a_tol = 1e-4
-r_tol = 1e-6
+a_tol = 1e-10
+r_tol = 1e-8
 
 [field]
 intensity = 1e13
-mode = "time_impulse"
+mode = "ddf"
 phase = 0.0
 omega = 0.2
 t_shift = 200.0
@@ -35,4 +36,4 @@ ddf_omega = 0.1
 T = 300
 
 [features]
-coulomb = true
+coulomb = false

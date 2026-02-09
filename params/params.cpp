@@ -341,6 +341,8 @@ void Params::load_from_toml(const std::string& filename)
     sigma_gaus  = tbl["field"]["sigma_gaus"].value_or(60.0) / au_fs;
     sigma_ddf   = tbl["field"]["sigma_ddf"].value_or(0.01) / au_fs;
 
+    omega_cut_off = tbl["analysis"]["omega_cut_off"].value_or(6.0) / au_eV;
+
     // ---- thermo ----
     T = tbl["thermo"]["T"].value_or(300);
 

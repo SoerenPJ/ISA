@@ -1,10 +1,10 @@
 [system]
-# Graphene patch built in C++ (hexagon tiling + dedup)
 lattice = "graphene"
-formation_shape = "triangle"  # rectangle | triangle
+formation_shape = "triangle" # rectangle | triangle
 formation = "zigzag"
 size_x = 2
 size_y = 2
+
 # bond length (nm)
 lattice_const = 0.142
 
@@ -19,12 +19,12 @@ use_strict_solver = false
 dt = 0.2
 t0 = 0.0
 t_max = 500.0
-a_tol = 1e-4
-r_tol = 1e-6
+a_tol = 1e-8
+r_tol = 1e-10
 
 [field]
 intensity = 1e13
-mode = "time_impulse"
+mode = "ddf"
 phase = 0.0
 omega = 0.2
 t_shift = 200.0
