@@ -28,10 +28,7 @@ sigma_ddf = 0.01
 
 [features]
 spin = false
-coulomb = false
-
-[analysis]
-omega_cut_off = 2.0
+coulomb = true
 
 [thermo]
 T = 300

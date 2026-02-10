@@ -2,6 +2,7 @@
 #include <toml++/toml.h>
 #include <cmath>
 #include <unordered_set>
+#include <set>
 #include <utility>
 #include <cstdint>
 
@@ -89,7 +90,8 @@ const std::string& formation)
     {
         return {a[0] * s, a[1] * s};
     }
-
+   
+    
     static std::vector<std::array<double,2>> dedup_points_round_6(const std::vector<std::array<double,2>>& pts)
     {
         constexpr double scale = 1e6;
@@ -97,17 +99,13 @@ const std::string& formation)
             std::int64_t x;
             std::int64_t y;
             bool operator==(const Key& o) const noexcept { return x == o.x && y == o.y; }
-        };
-        struct KeyHash {
-            std::size_t operator()(const Key& k) const noexcept {
-                const std::uint64_t a = static_cast<std::uint64_t>(k.x);
-                const std::uint64_t b = static_cast<std::uint64_t>(k.y);
-                return static_cast<std::size_t>(a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2)));
+            bool operator<(const Key& o) const noexcept {
+                if (x != o.x) return x < o.x;
+                return y < o.y;
             }
         };
 
-        std::unordered_set<Key, KeyHash> seen;
-        seen.reserve(pts.size());
+        std::set<Key> seen;
         std::vector<std::array<double,2>> unique;
         unique.reserve(pts.size());
 
@@ -338,10 +336,10 @@ void Params::load_from_toml(const std::string& filename)
     au_omega    = tbl["field"]["omega"].value_or(0.2) / au_eV;
     au_omega_ddf = tbl["field"]["ddf_omega"].value_or(0.1) / au_eV;
     t_shift     = tbl["field"]["t_shift"].value_or(200.0) / au_fs;
-    sigma_gaus  = tbl["field"]["sigma_gaus"].value_or(60.0) / au_fs;
-    sigma_ddf   = tbl["field"]["sigma_ddf"].value_or(0.01) / au_fs;
+    sigma_gaus  = tbl["field"]["sigma_gaus"].value_or(60.0) /au_fs;
+    sigma_ddf   = tbl["field"]["sigma_ddf"].value_or(0.01)/ au_fs;
 
-    omega_cut_off = tbl["analysis"]["omega_cut_off"].value_or(6.0) / au_eV;
+    omega_cut_off = tbl["analysis"]["omega_cut_off"].value_or(6.0) /au_eV;
 
     // ---- thermo ----
     T = tbl["thermo"]["T"].value_or(300);

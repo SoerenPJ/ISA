@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import integrate
 import matplotlib.pyplot as plt
 import os
 import sys
@@ -63,7 +64,7 @@ t2 = t1;#// + 0.5
 
 
 # external field parameters
-Intensity = (1e13/au_kg) * (au_s*au_s*au_s)  #// time pules = 1e13 ddf = 1e15
+Intensity = (1e15/au_kg) * (au_s*au_s*au_s)  #// time pules = 1e13 ddf = 1e15
 E0 = np.sqrt((2 *np.pi* Intensity) / (au_c)) #// Electric field amplitude
 
 t_shift = 200 / au_fs
@@ -96,15 +97,30 @@ out_dir = base_dir / "sigma_ext"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 
-#au_omega_fourier = np.loadtxt(base_dir / 'omega_fourier.txt')
+   
+
+
+
+
+
 sigma_ext = np.loadtxt(base_dir / 'sigma_ext.txt')
-#print("this is the shape of au_omega_fourier: ", au_omega_fourier.shape)
-print("this is the shape of sigma_ext: ", sigma_ext.shape)  
-print(sigma_ext[0])
+alpha_ext = np.loadtxt(base_dir / 'alpha_ext.txt')
+
+
+alpha_real = alpha_ext[:, 0]
+alpha_imag = alpha_ext[:, 1]
+
+plt.plot(sigma_ext[:,0] * au_eV, alpha_real, label='Re(alpha)', color='blue')
+plt.plot(sigma_ext[:,0] * au_eV, alpha_imag, label='Im(alpha)', color='orange')
+plt.legend()
+plt.xlabel('Energy (eV)', fontsize=12)
+plt.show()
+
+
 
 plt.figure(figsize=(15, 9))
-plt.plot(sigma_ext[:,0] * au_eV, sigma_ext[:,1] * au_nm**2) #, label='e-e off')
-
+plt.plot(sigma_ext[:,0]*au_eV, sigma_ext[:,1] * au_nm**2) 
+plt.yscale('log')
 plt.xlabel('Energy (eV)', fontsize=12)
 plt.ylabel('Extinction Cross-Section', fontsize=12)
 plt.xlim(0, (sigma_ext[:,0][-1] * au_eV))  # automated to always go to the last element of au_omega_fourier

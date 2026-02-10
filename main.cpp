@@ -227,37 +227,44 @@
             }
 
         }
+        if (time_vec.size() < 2) {
+            cerr << "Error: Not enough time points for Fourier analysis (need at least 2)\n";
+            return 1;
+        }
+        // Fixed frequency resolution (matching Python's 0.005 eV)
+        double freq_step_eV_au = 0.005/p.au_eV;  // eV
 
-        double dt = time_vec[1] - time_vec[0];
-        double T = time_vec(time_vec.size() - 1) - time_vec[0];
-        double domega = 2.0 * M_PI / T;
-        double omega_ny = M_PI / dt;
-        double omega_max = min(omega_ny, p.omega_cut_off);
-
-        int N_omega = static_cast<int>(omega_max / domega);
+        // p.omega_cut_off is already in a.u. (from params.cpp)
+        int N_omega = static_cast<int>(p.omega_cut_off / freq_step_eV_au);
 
         VectorXd omega_fourier(N_omega);
         for (int i = 0; i < N_omega; ++i)
-            omega_fourier(i) = i * domega;
-
-        //save omega_fourier
-        {
-            ofstream fout(out_dir / "omega_fourier.txt");
-            for (int i = 0; i < omega_fourier.size(); ++i)
-                fout << omega_fourier(i) << "\n";
-        }
-
+            omega_fourier(i) = i * freq_step_eV_au;
+       
         VectorXd sigma_ext; 
+        VectorXcd alpha;
         compute_sigma_ext(
             dipole_t,
             time_vec,
             omega_fourier,
+            p.a,
             p.au_fs,
             p.E0,
+            p.N,
             p.au_c,
             p.sigma_ddf,
-            sigma_ext
+            sigma_ext, 
+            alpha
             );
+
+      
+        {
+            ofstream fout(out_dir / "alpha_ext.txt");
+            for (int i = 0; i < alpha.size(); ++i) {
+                fout << alpha(i).real() << " "
+                    << alpha(i).imag() << "\n";}
+        }
+
 
         // save sigma_ext
         {
@@ -265,9 +272,9 @@
             for (int i = 0; i < sigma_ext.size(); ++i)
                 fout << omega_fourier(i) << " " << sigma_ext(i) << "\n";
         }
+        
 
-
-        cout << "All outputs saved under: " << out_dir << "\n";
+        cout << "All outputs saved under: " << out_dir << endl;
 
         return 0;
     }

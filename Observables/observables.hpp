@@ -12,12 +12,14 @@ std::complex<double> trapezoid(const Eigen::VectorXd& t, const Eigen::VectorXcd&
 
 
 void compute_sigma_ext(
-    const Eigen::VectorXcd &dipole_t,
+    const Eigen::VectorXd &dipole_t,
     const Eigen::VectorXd &t,
     const Eigen::VectorXd &omega_fourier,
+    double a,
     double au_fs,
     double E0,
+    int N,
     double au_c,
     double sigma_ddf,
-    Eigen::VectorXd &sigma_ext
-);
+    Eigen::VectorXd &sigma_ext,
+    Eigen::VectorXcd &alpha);

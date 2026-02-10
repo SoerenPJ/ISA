@@ -1,4 +1,6 @@
 #include "observables.hpp"
+#include <iostream> 
+
 
 using namespace std;
 using namespace Eigen;
@@ -21,7 +23,7 @@ double compute_dipole_moment(
     return rho_ind_diag.dot(xl);
 }
 
-//======================SIMPSON INTEGRATION=========================
+//======================trapezoid INTEGRATION=========================
 std::complex<double> trapezoid(const Eigen::VectorXd &t, const Eigen::VectorXcd &f) {
     assert(t.size() == f.size());
     std::complex<double> integral = 0.0;
@@ -34,32 +36,44 @@ std::complex<double> trapezoid(const Eigen::VectorXd &t, const Eigen::VectorXcd 
 }
 
 //======================SIGMA EXT=========================
-void compute_sigma_ext( const VectorXcd &dipole_t, const VectorXd  &t, const VectorXd  &omega_fourier,
-    double au_fs, double E0, double au_c, double sigma_ddf, VectorXd &sigma_ext)
+void compute_sigma_ext(
+    const VectorXd &dipole_t,
+    const VectorXd  &t,
+    const VectorXd  &omega_fourier,
+    double a,
+    double au_fs,
+    double E0,
+    int    N,
+    double au_c,
+    double sigma_ddf,
+    VectorXd &sigma_ext, VectorXcd &alpha)
 {
-    const int Nt = t.size(); 
+    const int Nt = t.size();
     const int Nw = omega_fourier.size();
+    alpha.resize(Nw);   
     
+    double hex_area = (3.0 * std::sqrt(3.0) / 2.0) * a * a;
+    double total_area = (static_cast<double>(N) / 2.0) * hex_area;
+
     sigma_ext.resize(Nw);
-
-    VectorXcd dipole_c = dipole_t.cast<complex<double>>();
-
-    for (int w = 0; w < Nw; ++w)
-    {
+   
+    for (int w = 0; w < Nw; ++w) {
         VectorXcd expo(Nt);
         for (int i = 0; i < Nt; ++i)
-            expo(i) = exp(complex<double>(0.0, omega_fourier(w) * t(i)));
+            expo(i) = std::exp(std::complex<double>(0.0, omega_fourier(w) * t(i)));
 
-        VectorXcd integrand = dipole_c.array() * expo.array();
-        
-        complex<double> P_w = trapezoid(t, integrand);
+        auto integrand = dipole_t.array() * expo.array();
+        auto P_w = trapezoid(t, integrand);
 
-        complex<double> alpha = 2.0 * P_w / (au_fs * sigma_ddf * E0); // remove 2 when spin is added
+        std::complex<double> alpha_w = P_w / (2.0 *  N*a *sigma_ddf * E0);
+
+        alpha(w) = alpha_w;
 
         sigma_ext(w) =
-            4.0 * M_PI * (omega_fourier(w) / au_c) * imag(alpha);
-    } 
-
+            4.0 * M_PI * (omega_fourier(w) / (au_c )) * std::imag(alpha_w);
+        
+        
+    }
 }
 
 

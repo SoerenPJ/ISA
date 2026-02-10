@@ -28,7 +28,7 @@ sigma_ddf = 0.01
 
 [features]
 spin = false
-coulomb = false
+coulomb = true
 
 [analysis]
 omega_cut_off = 2.0
