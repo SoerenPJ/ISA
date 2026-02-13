@@ -146,8 +146,6 @@ double Potential::calculate_phi(double xa, double xb,
                                 double Bz) const
 {
     // Atomic-units version of the bachelor formula:
-    //   phi = (e/hbar) * ∫ A·dl,  with A corresponding to Bz.
-    // For our straight-line gauge, this reduces to
     //   phi = (e/hbar) * Bz * ( (ya + yb) * (xa - xb) / 2 ).
     const double e_au    = static_cast<double>(p.e);
     const double hbar_au = static_cast<double>(p.au_hbar); // = 1 in a.u.
@@ -194,6 +192,30 @@ Potential::build_peierls_phases(double Bz) const
     }
 
     return phases;
+}
+
+std::vector<Potential::Bond> Potential::get_bonds() const
+{
+    std::vector<Bond> bonds;
+    if (!p.two_dim)
+        return bonds;
+
+    const int N_sites = static_cast<int>(p.xl_2D.size());
+    if (N_sites == 0)
+        return bonds;
+
+    const double cutoff = p.a + 1e-3;
+    const double cutoff2 = cutoff * cutoff;
+
+    for (int i = 0; i < N_sites; ++i) {
+        for (int j = i + 1; j < N_sites; ++j) {
+            const double dx = p.xl_2D[i][0] - p.xl_2D[j][0];
+            const double dy = p.xl_2D[i][1] - p.xl_2D[j][1];
+            if (dx*dx + dy*dy <= cutoff2)
+                bonds.emplace_back(i, j);
+        }
+    }
+    return bonds;
 }
 
 void Potential::apply_peierls_to_spinful_hamiltonian(MatrixC& H_spin) const

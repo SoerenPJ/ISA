@@ -3,6 +3,7 @@
 #include <Eigen/Dense>
 #include <utility>
 #include <vector>
+#include <array>
 #include <complex>
 #include <functional>
 #include <iostream>
@@ -26,7 +27,12 @@ struct TimeTonianSolver;   // <<< ADD THIS
 struct RhoHistory {
     std::vector<double> time;
     std::vector<std::vector<double>> diag;   // diag[t][i] = rho_ii(t)
-    std::vector<MatrixC> rho_full; std::vector<double> J_x; std::vector<double> J_y;
+    std::vector<MatrixC> rho_full;
+    std::vector<double> J_x;
+    std::vector<double> J_y;
+    // Induced vector potential per site when self_consistent_phase is on: A_ind_[xy][t][i]
+    std::vector<std::vector<double>> A_ind_x;
+    std::vector<std::vector<double>> A_ind_y;
 };
 
 // =====================================================
@@ -84,16 +90,34 @@ struct TimeTonianSolver {
     Eigen::VectorXd V_hartree_cached;  // Hartree potential per site
 
 
-    //for self consistent, calc current -> vector field -> update HTB 
-    //geometry 
+    // geometry
     Eigen::VectorXd x_pos;
     Eigen::VectorXd y_pos;
 
-    //dipole -> current calc
-    MatrixC P_x; 
-    MatrixC P_y; 
-
+    // dipole / current
+    MatrixC P_x;
+    MatrixC P_y;
     double hbar;
+
+    // ---------- Self-consistent induced phase (current -> A_ind -> phi_ind -> hopping) ----------
+    bool self_consistent_on = false;
+    MatrixC H_prev;   // Hamiltonian from previous RHS call (for current and next H build)
+    std::vector<std::pair<int,int>> bonds;
+    std::vector<double> phi_ext;   // external Peierls phase per bond (from B_ext)
+    double au_mu_0 = 0.0;
+    double area_2d = 1.0;
+    Eigen::VectorXd J_l_x;
+    Eigen::VectorXd J_l_y;
+    Eigen::VectorXd J_l_x_eq;   // equilibrium site current (so A_ind from J_l - J_l_eq starts at 0)
+    Eigen::VectorXd J_l_y_eq;
+    bool J_l_eq_computed = false;
+    Eigen::VectorXd A_ind_x;
+    Eigen::VectorXd A_ind_y;
+    std::vector<double> phi_ind;
+    std::vector<double> combined_phase;  // phi_ext + phi_ind per bond
+    std::vector<std::array<double,2>> points_2d;  // copy of xl_2D for rebuilding H with phases
+    double t_hop = 0.0;   // hopping t (e.g. p.t1)
+    double a_bond = 0.0;  // bond length for TB_hamiltonian_from_points_with_phases
 
 
 

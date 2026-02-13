@@ -2,6 +2,7 @@
 #include "Density.hpp"
 #include "params/params.hpp"
 #include "Hamiltonians/potential.hpp"
+#include "Hamiltonians/hamiltonian.hpp"
 
 #include <numeric>
 #include <algorithm>
@@ -62,22 +63,24 @@ void RhoObserver::operator()(
     }
 
     // Store full rho(t) for post-processing current calculation
+    
     MatrixC rho_k(N_mat, N_mat);
     for (int i = 0; i < N_mat; ++i)
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
     hist.rho_full.push_back(rho_k);
-
+    
     // ==============================
-    // Compute current 
+    // Compute current
     // ==============================
     const std::complex<double> im(0.0, 1.0);
     double e_over_hbar = solver->e_charge / solver->hbar;
 
-    // Hamiltonian used in this step
-   MatrixC H_t = solver->H0;
+    // H at current (t, rho): start from H0 so J and A_ind follow the same time dependence as the pulse.
+    // (Using H_prev can lag and give flat A_ind when observer runs after each step.)
+    MatrixC H_t = solver->H0;
 
-    // external potential
+    // external potential at current time t
     Eigen::VectorXd Vext = solver->get_potential(t);
 
     if (solver->coulomb_on) {
@@ -139,6 +142,74 @@ void RhoObserver::operator()(
     // Store for plotting
     hist.J_x.push_back(Jx_exp);
     hist.J_y.push_back(Jy_exp);
+
+    // Compute and store A_ind from *induced* current (J_l - J_l_eq) so it starts at 0 and evolves with the pulse
+    if (solver->self_consistent_on && !solver->bonds.empty() &&
+        solver->bonds.size() == solver->phi_ext.size()) {
+        MatrixC rho_J_x = rho_k * J_x;
+        MatrixC rho_J_y = rho_k * J_y;
+        Eigen::VectorXd J_l_x = Eigen::VectorXd::Zero(N_sites);
+        Eigen::VectorXd J_l_y = Eigen::VectorXd::Zero(N_sites);
+        for (size_t b = 0; b < solver->bonds.size(); ++b) {
+            const int i = solver->bonds[b].first;
+            const int j = solver->bonds[b].second;
+            double cx = std::imag(rho_J_x(i, j));
+            double cy = std::imag(rho_J_y(i, j));
+            if (solver->spin_on) {
+                cx += std::imag(rho_J_x(i + N_sites, j + N_sites));
+                cy += std::imag(rho_J_y(i + N_sites, j + N_sites));
+            }
+            J_l_x(i) += cx;
+            J_l_x(j) -= cx;
+            J_l_y(i) += cy;
+            J_l_y(j) -= cy;
+        }
+        // Equilibrium J_l (once) so induced current = J_l - J_l_eq → A_ind starts at 0
+        if (!solver->J_l_eq_computed) {
+            Eigen::VectorXd Vext0 = solver->get_potential(0.0);
+            MatrixC H_eq = solver->H0;
+            for (int i = 0; i < N_sites; ++i) {
+                std::complex<double> v(Vext0(i), 0.0);
+                H_eq(i, i) += v;
+                if (solver->spin_on) H_eq(i + N_sites, i + N_sites) += v;
+            }
+            const std::complex<double> im(0.0, 1.0);
+            const double eoh = solver->e_charge / solver->hbar;
+            MatrixC J_x_eq(N_mat, N_mat), J_y_eq(N_mat, N_mat);
+            J_x_eq.noalias() = -im * eoh * (H_eq * solver->P_x - solver->P_x * H_eq);
+            J_y_eq.noalias() = -im * eoh * (H_eq * solver->P_y - solver->P_y * H_eq);
+            MatrixC rho0_Jx = solver->rho0 * J_x_eq;
+            MatrixC rho0_Jy = solver->rho0 * J_y_eq;
+            solver->J_l_x_eq.resize(N_sites);
+            solver->J_l_y_eq.resize(N_sites);
+            solver->J_l_x_eq.setZero();
+            solver->J_l_y_eq.setZero();
+            for (size_t b = 0; b < solver->bonds.size(); ++b) {
+                const int i = solver->bonds[b].first;
+                const int j = solver->bonds[b].second;
+                double cx = std::imag(rho0_Jx(i, j));
+                double cy = std::imag(rho0_Jy(i, j));
+                if (solver->spin_on) {
+                    cx += std::imag(rho0_Jx(i + N_sites, j + N_sites));
+                    cy += std::imag(rho0_Jy(i + N_sites, j + N_sites));
+                }
+                solver->J_l_x_eq(i) += cx;
+                solver->J_l_x_eq(j) -= cx;
+                solver->J_l_y_eq(i) += cy;
+                solver->J_l_y_eq(j) -= cy;
+            }
+            solver->J_l_eq_computed = true;
+        }
+        Eigen::VectorXd J_l_x_ind = J_l_x - solver->J_l_x_eq;
+        Eigen::VectorXd J_l_y_ind = J_l_y - solver->J_l_y_eq;
+        Eigen::VectorXd A_x = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * J_l_x_ind);
+        Eigen::VectorXd A_y = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * J_l_y_ind);
+        hist.A_ind_x.push_back(std::vector<double>(A_x.data(), A_x.data() + N_sites));
+        hist.A_ind_y.push_back(std::vector<double>(A_y.data(), A_y.data() + N_sites));
+    } else if (solver->self_consistent_on) {
+        hist.A_ind_x.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
+        hist.A_ind_y.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
+    }
 
     // simple progress print
     if (counter % 5000 == 0) {
@@ -257,16 +328,102 @@ void TimeTonianSolver::operator()(
     // --- get diagonal potential Vext(t) ---
     const Eigen::VectorXd Vext = get_potential(t);
 
-    // --- H_tmp = H0 (copy) ---
-    H_tmp = H0;
+    // --- Build H_tmp: either from self-consistent induced phase or from H0 ---
+    if (self_consistent_on && !bonds.empty() && static_cast<int>(points_2d.size()) == N_sites_local &&
+        static_cast<int>(phi_ext.size()) == static_cast<int>(bonds.size())) {
 
+        if (H_prev.rows() == 0)
+            H_prev = H0;
 
-    /* RHS call counter for debugging
-    static size_t rhs_calls = 0;
-    rhs_calls++;
-    if (rhs_calls % 10000 == 0)
-        std::cout << "RHS calls = " << rhs_calls << std::endl;
-    */
+        const std::complex<double> im(0.0, 1.0);
+        const double e_over_hbar = e_charge / hbar;
+        MatrixC J_x(N_mat_local, N_mat_local);
+        MatrixC J_y(N_mat_local, N_mat_local);
+        J_x.noalias() = -im * e_over_hbar * (H_prev * P_x - P_x * H_prev);
+        J_y.noalias() = -im * e_over_hbar * (H_prev * P_y - P_y * H_prev);
+
+        MatrixC rho_J_x = rho_tmp * J_x;
+        MatrixC rho_J_y = rho_tmp * J_y;
+
+        J_l_x.setZero();
+        J_l_y.setZero();
+        for (size_t b = 0; b < bonds.size(); ++b) {
+            const int i = bonds[b].first;
+            const int j = bonds[b].second;
+            double cx = std::imag(rho_J_x(i, j));
+            double cy = std::imag(rho_J_y(i, j));
+            if (spin_on) {
+                cx += std::imag(rho_J_x(i + N_sites_local, j + N_sites_local));
+                cy += std::imag(rho_J_y(i + N_sites_local, j + N_sites_local));
+            }
+            J_l_x(i) += cx;
+            J_l_x(j) -= cx;
+            J_l_y(i) += cy;
+            J_l_y(j) -= cy;
+        }
+
+        // Equilibrium site current: A_ind should be from *induced* current (J_l - J_l_eq)
+        // so it starts at zero before the pulse and evolves with the dipole/current.
+        if (!J_l_eq_computed) {
+            const Eigen::VectorXd Vext0 = get_potential(0.0);
+            MatrixC H_eq = H0;
+            for (int i = 0; i < N_sites_local; ++i) {
+                std::complex<double> v(Vext0(i), 0.0);
+                H_eq(i, i) += v;
+                if (spin_on) H_eq(i + N_sites_local, i + N_sites_local) += v;
+            }
+            MatrixC J_x_eq(N_mat_local, N_mat_local), J_y_eq(N_mat_local, N_mat_local);
+            J_x_eq.noalias() = -im * e_over_hbar * (H_eq * P_x - P_x * H_eq);
+            J_y_eq.noalias() = -im * e_over_hbar * (H_eq * P_y - P_y * H_eq);
+            MatrixC rho0_Jx = rho0 * J_x_eq;
+            MatrixC rho0_Jy = rho0 * J_y_eq;
+            J_l_x_eq.resize(N_sites_local);
+            J_l_y_eq.resize(N_sites_local);
+            J_l_x_eq.setZero();
+            J_l_y_eq.setZero();
+            for (size_t b = 0; b < bonds.size(); ++b) {
+                const int i = bonds[b].first;
+                const int j = bonds[b].second;
+                double cx = std::imag(rho0_Jx(i, j));
+                double cy = std::imag(rho0_Jy(i, j));
+                if (spin_on) {
+                    cx += std::imag(rho0_Jx(i + N_sites_local, j + N_sites_local));
+                    cy += std::imag(rho0_Jy(i + N_sites_local, j + N_sites_local));
+                }
+                J_l_x_eq(i) += cx;
+                J_l_x_eq(j) -= cx;
+                J_l_y_eq(i) += cy;
+                J_l_y_eq(j) -= cy;
+            }
+            J_l_eq_computed = true;
+        }
+
+        Eigen::VectorXd J_l_x_ind = J_l_x - J_l_x_eq;
+        Eigen::VectorXd J_l_y_ind = J_l_y - J_l_y_eq;
+        A_ind_x.noalias() = (au_mu_0 / area_2d) * (V_ee * J_l_x_ind);
+        A_ind_y.noalias() = (au_mu_0 / area_2d) * (V_ee * J_l_y_ind);
+
+        if (phi_ind.size() != bonds.size())
+            phi_ind.resize(bonds.size());
+        if (combined_phase.size() != bonds.size())
+            combined_phase.resize(bonds.size());
+
+        for (size_t b = 0; b < bonds.size(); ++b) {
+            const int i = bonds[b].first;
+            const int j = bonds[b].second;
+            double dx = points_2d[j][0] - points_2d[i][0];
+            double dy = points_2d[j][1] - points_2d[i][1];
+            double A_avg_x = (A_ind_x(i) + A_ind_x(j)) * 0.5;
+            double A_avg_y = (A_ind_y(i) + A_ind_y(j)) * 0.5;
+            phi_ind[b] = (e_charge / hbar) * (A_avg_x * dx + A_avg_y * dy);
+            combined_phase[b] = phi_ext[b] + phi_ind[b];
+        }
+
+        H_tmp = TB_hamiltonian_from_points_with_phases(
+            points_2d, a_bond, t_hop, bonds, combined_phase, spin_on, 1e-3);
+    } else {
+        H_tmp = H0;
+    }
 
     // --- add diagonal external potential ---
     // Vext is defined per site; if spin is on, apply to both spin blocks.
@@ -320,7 +477,8 @@ void TimeTonianSolver::operator()(
         }
     }
 
-    
+    if (self_consistent_on && H_tmp.rows() > 0)
+        H_prev = H_tmp;
 
     //==========================================================
 
@@ -421,6 +579,28 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.V_ind_vector.resize(N_sites);
     solver.V_hartree_cached.resize(N_sites);
     solver.V_hartree_cached.setZero();
+
+    solver.self_consistent_on = p.self_consistent_phase && p.two_dim && !p.xl_2D.empty();
+    if (solver.self_consistent_on) {
+        solver.bonds = pot.get_bonds();
+        solver.phi_ext.resize(solver.bonds.size(), 0.0);
+        if (p.B_ext) {
+            auto peierls = pot.build_peierls_phases(pot.compute_Bz());
+            for (size_t k = 0; k < solver.bonds.size() && k < peierls.size(); ++k)
+                solver.phi_ext[k] = peierls[k].phi;
+        }
+        solver.points_2d = p.xl_2D;
+        solver.t_hop = p.t1;
+        solver.a_bond = p.a;
+        solver.au_mu_0 = p.au_mu_0;
+        solver.area_2d = p.area_2d;
+        solver.J_l_x.resize(N_sites);
+        solver.J_l_y.resize(N_sites);
+        solver.A_ind_x.resize(N_sites);
+        solver.A_ind_y.resize(N_sites);
+        solver.J_l_x.setZero();
+        solver.J_l_y.setZero();
+    }
 
     if (solver.coulomb_on) {
         // Equilibrium site occupations from initial rho (sum over spin if needed)

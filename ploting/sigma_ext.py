@@ -136,67 +136,52 @@ au_nm = 0.0529177
 
 phases_path = base_dir / "peierls_phases.txt"
 
+if phases_path.exists():
+    # Load: i j xa ya xb yb phi   (skipping comment lines)
+    data = np.loadtxt(phases_path, comments="#")
+    i, j, xa, ya, xb, yb, phi = data.T
+    print("this is phi max", phi.max())
+    print("this is phi min", phi.min())
+    # Convert to nm
+    xa_nm = xa * au_nm
+    ya_nm = ya * au_nm
+    xb_nm = xb * au_nm
+    yb_nm = yb * au_nm
 
-# Load: i j xa ya xb yb phi   (skipping comment lines)
-data = np.loadtxt(phases_path, comments="#")
-#print(data)
+    # Build segments: [[(xa,ya),(xb,yb)], ...]
+    segments = np.stack(
+        [np.stack([xa_nm, ya_nm], axis=1), np.stack([xb_nm, yb_nm], axis=1)],
+        axis=1
+    )  # shape (n_bonds, 2, 2)
 
+    values = phi
+    vmin = values.min()
+    vmax = values.max()
+    if vmin == vmax:
+        eps = 1e-3
+        vmin -= eps
+        vmax += eps
 
-i, j, xa, ya, xb, yb, phi = data.T
-rounded_values = np.round(phi, decimals=6)
-unique_values = np.unique(rounded_values)
-print("this is phi max", phi.max())
-print("this is phi min", phi.min())
-# Convert to nm
-xa_nm = xa * au_nm
-ya_nm = ya * au_nm
-xb_nm = xb * au_nm
-yb_nm = yb * au_nm
-
-# Build segments: [[(xa,ya),(xb,yb)], ...]
-segments = np.stack(
-    [np.stack([xa_nm, ya_nm], axis=1), np.stack([xb_nm, yb_nm], axis=1)],
-    axis=1
-)  # shape (n_bonds, 2, 2)
-
-# Color by phase value
-values = phi
-vmin = values.min()
-vmax = values.max()
-if vmin == vmax:
-    # Avoid zero range
-    eps = 1e-3
-    vmin -= eps
-    vmax += eps
-
-cmap = plt.cm.plasma
-norm = Normalize(vmin=vmin, vmax=vmax)
-
-fig, ax = plt.subplots(figsize=(6, 6))
-
-# "Bare" tight-binding bonds in light gray underlay
-ax.add_collection(LineCollection(segments, colors='lightgray', linewidths=2, zorder=1))
-
-# Colored bonds with Peierls phase
-lc = LineCollection(segments, array=values, cmap=cmap, norm=norm,
-                    linewidths=3, zorder=2)
-ax.add_collection(lc)
-
-ax.set_aspect('equal', adjustable='box')
-
-pad = 0.1
-ax.set_xlim(xa_nm.min() - pad, xa_nm.max() + pad)
-ax.set_ylim(ya_nm.min() - pad, ya_nm.max() + pad)
-
-ax.set_xlabel("Position x (nm)")
-ax.set_ylabel("Position y (nm)")
-ax.set_title("Peierls Phase Distribution Over Graphene Bonds")
-
-cbar = fig.colorbar(lc, ax=ax)
-cbar.set_label("Peierls Phase")
-
-plt.grid(False)
-plt.show()
+    cmap = plt.cm.plasma
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.add_collection(LineCollection(segments, colors='lightgray', linewidths=2, zorder=1))
+    lc = LineCollection(segments, array=values, cmap=cmap, norm=norm,
+                        linewidths=3, zorder=2)
+    ax.add_collection(lc)
+    ax.set_aspect('equal', adjustable='box')
+    pad = 0.1
+    ax.set_xlim(xa_nm.min() - pad, xa_nm.max() + pad)
+    ax.set_ylim(ya_nm.min() - pad, ya_nm.max() + pad)
+    ax.set_xlabel("Position x (nm)")
+    ax.set_ylabel("Position y (nm)")
+    ax.set_title("Peierls Phase Distribution Over Graphene Bonds")
+    cbar = fig.colorbar(lc, ax=ax)
+    cbar.set_label("Peierls Phase")
+    plt.grid(False)
+    plt.show()
+else:
+    print("peierls_phases.txt not found (B_ext was false); skipping Peierls phase plot.")
 
 
 #================ diagonal values (rho files are complex: real imag pairs per element) ================

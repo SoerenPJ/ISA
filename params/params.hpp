@@ -20,6 +20,7 @@ struct Params
     // ---- SYSTEM (TOML) ----
     // ======================
     int N;
+    bool B_ext = false;
     bool two_dim = false;
     bool spin_on = false;
     std::string lattice = "chain";
@@ -71,12 +72,15 @@ struct Params
     // ======================
     bool coulomb_on = false;
     double coulomb_onsite_eV = 10.0;  // Hubbard U / onsite repulsion (eV), e.g. 5-10 for graphene
+    bool self_consistent_phase = false;  // current -> A_ind -> phi_ind -> update hopping (induced phase)
 
     // ======================
     // ---- DERIVED ----
     // ======================
     double a;          // lattice spacing (a.u.)
     double E0;         // field amplitude
+    double au_mu_0;    // vacuum permeability in a.u. (4*pi/c^2)
+    double area_2d;    // effective area for 2D A_ind (graphene unit-cell related)
     Eigen::MatrixXd V_ee;
 
     // ======================

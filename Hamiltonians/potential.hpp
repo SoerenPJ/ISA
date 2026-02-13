@@ -53,6 +53,10 @@ public:
     // (graphene etc.). Uses p.xl_2D and p.a as in the bachelor code.
     std::vector<PeierlsPhase> build_peierls_phases(double Bz) const;
 
+    // Bond list (i,j) for nearest neighbours; used for self-consistent induced phase.
+    using Bond = std::pair<int, int>;
+    std::vector<Bond> get_bonds() const;
+
     // Apply external magnetic field via Peierls phases to a spinful Hamiltonian H_spin.
     // H_spin must already be 2*N_sites x 2*N_sites (after spin_tonian),
     // and only the graphene/2D case is modified.

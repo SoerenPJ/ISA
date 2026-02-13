@@ -340,7 +340,7 @@ void Params::load_from_toml(const std::string& filename)
     t_shift     = tbl["field"]["t_shift"].value_or(200.0) / au_fs;
     sigma_gaus  = tbl["field"]["sigma_gaus"].value_or(60.0) /au_fs;
     sigma_ddf   = tbl["field"]["sigma_ddf"].value_or(0.01)/ au_fs;
-
+    B_ext       = tbl["filed"]["B_ext"].value_or(false); 
     omega_cut_off = tbl["analysis"]["omega_cut_off"].value_or(6.0) /au_eV;
 
     // ---- thermo ----
@@ -349,6 +349,7 @@ void Params::load_from_toml(const std::string& filename)
     // ---- features ----
     coulomb_on = tbl["features"]["coulomb"].value_or(true);
     coulomb_onsite_eV = tbl["features"]["coulomb_onsite_eV"].value_or(10.0);
+    self_consistent_phase = tbl["features"]["self_consistent_phase"].value_or(true);
 }
 
 // ======================
@@ -356,10 +357,19 @@ void Params::load_from_toml(const std::string& filename)
 // ======================
 void Params::finalize()
 {
-    
+    au_mu_0 = 4.0 * M_PI / (au_c * au_c);  // vacuum permeability in a.u.
     const double intensity_au = (Intensity / au_kg) * (au_s * au_s * au_s);
     E0 = std::sqrt((2.0 * M_PI * intensity_au) / au_c);
     build_lattice();
+
+    // Effective 2D area for induced vector potential (graphene: unit-cell area * hexagon count)
+    if (two_dim && !xl_2D.empty()) {
+        const double hex_area = (3.0 * std::sqrt(3.0) * a * a) * 0.5;
+        int n_hex = std::max(1, size_x * size_y);
+        area_2d = hex_area * static_cast<double>(n_hex);
+    } else {
+        area_2d = 1.0;
+    }
 }
 
 // ======================

@@ -142,7 +142,7 @@
         }
 
     
-        if (p.lattice == "graphene" && p.two_dim && p.spin_on) {
+        if (p.lattice == "graphene" && p.two_dim && p.spin_on && p.B_ext) {
             pot.export_peierls_phases(out_dir / "peierls_phases.txt");
         }
 
@@ -150,16 +150,27 @@
         // Build Hamiltonian
         // ===========================
         MatrixC Hc;
-        if (p.lattice == "graphene") {
+        if (p.self_consistent_phase && p.lattice == "graphene" && p.two_dim) {
+            auto bonds = pot.get_bonds();
+            std::vector<double> phi_ext(bonds.size(), 0.0);
+            if (p.B_ext) {
+                auto peierls = pot.build_peierls_phases(pot.compute_Bz());
+                for (size_t k = 0; k < bonds.size() && k < peierls.size(); ++k)
+                    phi_ext[k] = peierls[k].phi;
+            }
+            Hc = TB_hamiltonian_from_points_with_phases(
+                p.xl_2D, p.a, p.t1, bonds, phi_ext, p.spin_on, 1e-3);
+        } else if (p.lattice == "graphene") {
             Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1);
         } else {
             Hc = TB_hamiltonian(p.N, p.t1, p.t2);
         }
 
-        if (p.spin_on) {
+        if (p.spin_on && !p.self_consistent_phase) {
             Hc = spin_tonian(Hc);
-            
-            pot.apply_peierls_to_spinful_hamiltonian(Hc);
+            if (p.B_ext) {
+                pot.apply_peierls_to_spinful_hamiltonian(Hc);
+            }
         }
 
         // Save Hamiltonian 
@@ -187,6 +198,7 @@
         // Eigenproblem 
         // ===========================
         auto [eigenvalues, eigenvectors] = compute_eigenpairs(Hc);
+
 
         // save eigenvalues
         {
@@ -298,6 +310,19 @@
                 fout << history.time[k] << " "
                     << history.J_x[k] << " "
                     << history.J_y[k] << "\n";
+            }
+        }
+
+        // Induced vector potential A_ind_x, A_ind_y per site (when self_consistent_phase was on)
+        if (!history.A_ind_x.empty() && history.A_ind_x.size() == history.time.size()) {
+            ofstream fout(out_dir / "A_ind_time_evolution.txt");
+            const int N_s = static_cast<int>(history.A_ind_x[0].size());
+            fout << "# t  A_ind_x_0 A_ind_y_0  A_ind_x_1 A_ind_y_1  ... (N_sites = " << N_s << ")\n";
+            for (size_t k = 0; k < history.time.size(); ++k) {
+                fout << history.time[k];
+                for (int i = 0; i < N_s; ++i)
+                    fout << " " << history.A_ind_x[k][i] << " " << history.A_ind_y[k][i];
+                fout << "\n";
             }
         }
 
