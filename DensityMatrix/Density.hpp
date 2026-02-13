@@ -1,10 +1,11 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <utility>
 #include <vector>
 #include <complex>
 #include <functional>
-#include <iostream>   // <-- added for std::cout
+#include <iostream>
 
 using MatrixC = Eigen::Matrix<
     std::complex<double>,
@@ -25,6 +26,7 @@ struct TimeTonianSolver;   // <<< ADD THIS
 struct RhoHistory {
     std::vector<double> time;
     std::vector<std::vector<double>> diag;   // diag[t][i] = rho_ii(t)
+    std::vector<MatrixC> rho_full; std::vector<double> J_x; std::vector<double> J_y;
 };
 
 // =====================================================
@@ -49,14 +51,21 @@ struct RhoObserver {
 // =====================================================
 struct TimeTonianSolver {
 
-    int N;
+    // Dimension of Hilbert space (rows/cols of H0)
+    int N_mat;
+    // Number of spatial sites/orbitals (from Params::N, without spin duplication)
+    int N_sites;
+    // Whether spin-doubling was applied (H0 is 2*N_sites × 2*N_sites)
+    bool spin_on;
+
     MatrixC H0;
     std::function<Eigen::VectorXd(double)> get_potential;
     bool coulomb_on;
+    // Coulomb matrix in site space (N_sites × N_sites)
     Eigen::MatrixXd V_ee;
-    Eigen::VectorXd rho0_diag;    
+    // Equilibrium site occupations (size N_sites)
+    Eigen::VectorXd rho0_diag;
     double e_charge;
-
     double gamma;                  // relaxation rate
     MatrixC rho0;                  // equilibrium density matrix
 
@@ -65,13 +74,27 @@ struct TimeTonianSolver {
     MatrixC V_tmp;
     MatrixC comm_tmp;
     MatrixC drho_dt_tmp;
+    // external potential in site space (size N_sites)
     Eigen::VectorXd Vext_tmp;
 
-    //EEI_related
-    Eigen::VectorXd rho_diag;       // size N
-    Eigen::VectorXd rho_l_ind;      // size N
-    Eigen::VectorXd V_ind_vector;   // size N
-    Eigen::VectorXd V_hartree_cached;     // size N
+    // EEI-related, all in site space (size N_sites)
+    Eigen::VectorXd rho_diag;          // instantaneous site occupations
+    Eigen::VectorXd rho_l_ind;         // induced density (rho - rho0)
+    Eigen::VectorXd V_ind_vector;      // not currently used, keep for compatibility
+    Eigen::VectorXd V_hartree_cached;  // Hartree potential per site
+
+
+    //for self consistent, calc current -> vector field -> update HTB 
+    //geometry 
+    Eigen::VectorXd x_pos;
+    Eigen::VectorXd y_pos;
+
+    //dipole -> current calc
+    MatrixC P_x; 
+    MatrixC P_y; 
+
+    double hbar;
+
 
 
     void operator()(const std::vector<std::complex<double>> &rho_vec,
@@ -83,8 +106,7 @@ struct TimeTonianSolver {
 // Function declarations
 // =====================================================
 
-Eigen::VectorXcd compute_eigenvalues(const Eigen::MatrixXcd& H);
-Eigen::MatrixXcd compute_eigenvectors(const Eigen::MatrixXcd& H);
+std::pair<Eigen::VectorXcd, Eigen::MatrixXcd> compute_eigenpairs(const Eigen::MatrixXcd& H);
 
 MatrixC Rho_0(const Eigen::VectorXcd &epsilon, double mu, double T);
 
@@ -98,3 +120,12 @@ MatrixC evolve_rho_over_time(
     const std::string &mode,
     const Params &p,
     RhoHistory &history);
+
+// Post-process stored rho(t) to compute current Jx, Jy and write current_time_evolution.txt
+void compute_current_from_history(
+    const Params &p,
+    const MatrixC &Hc,
+    Potential &pot,
+    const RhoHistory &history,
+    const std::string &mode,
+    const std::string &out_dir);

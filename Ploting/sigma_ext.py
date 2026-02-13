@@ -96,10 +96,117 @@ if len(sys.argv) >= 2:
 out_dir = base_dir / "sigma_ext"
 out_dir.mkdir(parents=True, exist_ok=True)
 
+# ----------------- load complex matrix (file: one row per line, each element as "real imag") ----------------- #
+def load_complex_matrix(path):
+    raw = np.loadtxt(path)   # shape (N, 2*N)
+    n = raw.shape[0]
+    pairs = raw.reshape(n, n, 2)
+    return pairs[..., 0] + 1j * pairs[..., 1]   # shape (N, N)
 
-   
+#=================debug code=============
+
+#================Hamiltonian===============
+HTB_raw = np.loadtxt(base_dir / "HTB.txt")  # shape (N, 2N)
+N = HTB_raw.shape[0]
+print("This is raw HTB", HTB_raw)
+# Interpret columns as [Re, Im] pairs
+HTB_pairs = HTB_raw.reshape(N, N, 2)
+HTB_real = HTB_pairs[..., 0]                # shape (N, N), real part
+
+print("HTB_real shape", HTB_real.shape)
+plt.matshow(HTB_real, cmap='viridis')
+plt.show()
+
+#===============Vll matrix=================
+
+V_ll = np.loadtxt(base_dir / "V_ee_spin.txt")
+print("V_ee shape", V_ll.shape)
+plt.matshow(np.real(V_ll), cmap='viridis')
+plt.show()
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+from pathlib import Path
+
+# Constants (same as elsewhere)
+au_nm = 0.0529177
+
+phases_path = base_dir / "peierls_phases.txt"
+
+
+# Load: i j xa ya xb yb phi   (skipping comment lines)
+data = np.loadtxt(phases_path, comments="#")
+#print(data)
+
+
+i, j, xa, ya, xb, yb, phi = data.T
+rounded_values = np.round(phi, decimals=6)
+unique_values = np.unique(rounded_values)
+print("this is phi max", phi.max())
+print("this is phi min", phi.min())
+# Convert to nm
+xa_nm = xa * au_nm
+ya_nm = ya * au_nm
+xb_nm = xb * au_nm
+yb_nm = yb * au_nm
+
+# Build segments: [[(xa,ya),(xb,yb)], ...]
+segments = np.stack(
+    [np.stack([xa_nm, ya_nm], axis=1), np.stack([xb_nm, yb_nm], axis=1)],
+    axis=1
+)  # shape (n_bonds, 2, 2)
+
+# Color by phase value
+values = phi
+vmin = values.min()
+vmax = values.max()
+if vmin == vmax:
+    # Avoid zero range
+    eps = 1e-3
+    vmin -= eps
+    vmax += eps
+
+cmap = plt.cm.plasma
+norm = Normalize(vmin=vmin, vmax=vmax)
+
+fig, ax = plt.subplots(figsize=(6, 6))
+
+# "Bare" tight-binding bonds in light gray underlay
+ax.add_collection(LineCollection(segments, colors='lightgray', linewidths=2, zorder=1))
+
+# Colored bonds with Peierls phase
+lc = LineCollection(segments, array=values, cmap=cmap, norm=norm,
+                    linewidths=3, zorder=2)
+ax.add_collection(lc)
+
+ax.set_aspect('equal', adjustable='box')
+
+pad = 0.1
+ax.set_xlim(xa_nm.min() - pad, xa_nm.max() + pad)
+ax.set_ylim(ya_nm.min() - pad, ya_nm.max() + pad)
+
+ax.set_xlabel("Position x (nm)")
+ax.set_ylabel("Position y (nm)")
+ax.set_title("Peierls Phase Distribution Over Graphene Bonds")
+
+cbar = fig.colorbar(lc, ax=ax)
+cbar.set_label("Peierls Phase")
+
+plt.grid(False)
+plt.show()
+
+
+#================ diagonal values (rho files are complex: real imag pairs per element) ================
+rho_j_space = load_complex_matrix(base_dir / "rho_j_space.txt")
+rho0_j_space = load_complex_matrix(base_dir / "rho0_j_space.txt")
+rho0_l_space = load_complex_matrix(base_dir / "rho0_l_space.txt")
+print(rho0_l_space.shape)
+print("this is the diagonal of the rho_j_space", np.diag(rho_j_space))
+print("this is the diagonal of the rho0_j_space", np.diag(rho0_j_space))
+print("this is the diagonal of the rho0_l_space", np.diag(rho0_l_space))
 
 
 
@@ -120,7 +227,7 @@ plt.show()
 
 plt.figure(figsize=(15, 9))
 plt.plot(sigma_ext[:,0]*au_eV, sigma_ext[:,1] * au_nm**2) 
-plt.yscale('log')
+#plt.yscale('log')
 plt.xlabel('Energy (eV)', fontsize=12)
 plt.ylabel('Extinction Cross-Section', fontsize=12)
 plt.xlim(0, (sigma_ext[:,0][-1] * au_eV))  # automated to always go to the last element of au_omega_fourier

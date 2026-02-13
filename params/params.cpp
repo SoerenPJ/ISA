@@ -316,14 +316,16 @@ void Params::load_from_toml(const std::string& filename)
     t2 = tbl["hamiltonian"]["t2"].value_or(-2.8) / au_eV;
     mu = tbl["hamiltonian"]["mu"].value_or(0.0) / au_eV;
     gamma = tbl["hamiltonian"]["gamma"].value_or(0.01) / au_eV;
+    // read optional spin flag from [hamiltonian] table
+    spin_on = tbl["hamiltonian"]["spin_on"].value_or(false);
 
     // ---- simulation ----
     
     dt    = tbl["simulation"]["dt"].value_or(0.2); // do not change, this is the way 
     t_end = tbl["simulation"]["t_max"].value_or(500.0) / au_fs;
     t0    = tbl["simulation"]["t0"].value_or(0.0) / au_fs;
-    a_tol = tbl["simulation"]["a_tol"].value_or(1e-4);
-    r_tol = tbl["simulation"]["r_tol"].value_or(1e-6);
+    a_tol = tbl["simulation"]["a_tol"].value_or(1e-10);
+    r_tol = tbl["simulation"]["r_tol"].value_or(1e-12);
     // ---- solver ----
     use_strict_solver = tbl["simulation"]["use_strict_solver"].value_or(false);
 
@@ -345,7 +347,8 @@ void Params::load_from_toml(const std::string& filename)
     T = tbl["thermo"]["T"].value_or(300);
 
     // ---- features ----
-    coulomb_on = tbl["features"]["coulomb"].value_or(false);
+    coulomb_on = tbl["features"]["coulomb"].value_or(true);
+    coulomb_onsite_eV = tbl["features"]["coulomb_onsite_eV"].value_or(10.0);
 }
 
 // ======================

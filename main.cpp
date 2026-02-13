@@ -19,6 +19,9 @@
     #include <sstream>
     #include <cstdint>
     #include <iterator>
+    #include <complex>
+    using namespace std::complex_literals;
+
 
     using namespace std;
     using namespace Eigen;
@@ -90,7 +93,6 @@
         try {
             fs::copy_file(cfg_p, out_dir / "input.toml", fs::copy_options::overwrite_existing);
         } catch (...) {
-            // non-fatal (e.g., relative path issues); continue
         }
 
         // ===========================
@@ -112,8 +114,37 @@
         // Build potential and Coulomb
         // ===========================
         Potential pot(p);
-        p.coulomb_on = false;   // keep off unless you want it on
         p.V_ee = pot.build_coulomb_matrix();
+
+        // Save V_ee (Coulomb / VLL) matrix for plotting
+        {
+            ofstream fout(out_dir / "V_ee.txt");
+            for (int i = 0; i < p.V_ee.rows(); ++i) {
+                for (int j = 0; j < p.V_ee.cols(); ++j)
+                    fout << p.V_ee(i, j) << " ";
+                fout << "\n";
+            }
+        }
+
+        if (p.spin_on) {
+            const int N_sites = p.N;
+            const int N_spin  = 2 * N_sites;
+            Eigen::MatrixXd V_spin = Eigen::MatrixXd::Zero(N_spin, N_spin);
+            V_spin.block(0,           0,           N_sites, N_sites) = p.V_ee;
+            V_spin.block(N_sites, N_sites, N_sites, N_sites) = p.V_ee;
+
+            ofstream fout_spin(out_dir / "V_ee_spin.txt");
+            for (int i = 0; i < N_spin; ++i) {
+                for (int j = 0; j < N_spin; ++j)
+                    fout_spin << V_spin(i, j) << " ";
+                fout_spin << "\n";
+            }
+        }
+
+    
+        if (p.lattice == "graphene" && p.two_dim && p.spin_on) {
+            pot.export_peierls_phases(out_dir / "peierls_phases.txt");
+        }
 
         // ===========================
         // Build Hamiltonian
@@ -123,6 +154,22 @@
             Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1);
         } else {
             Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+        }
+
+        if (p.spin_on) {
+            Hc = spin_tonian(Hc);
+            
+            pot.apply_peierls_to_spinful_hamiltonian(Hc);
+        }
+
+        // Save Hamiltonian 
+        {
+            ofstream fout(out_dir / "HTB.txt");
+            for (int i = 0; i < Hc.rows(); ++i) {
+                for (int j = 0; j < Hc.cols(); ++j)
+                    fout << Hc(i, j).real() << " " << Hc(i, j).imag() << " ";
+                fout << "\n";
+            }
         }
 
         Eigen::VectorXd xl_eig;
@@ -137,10 +184,9 @@
         cout << "\nxl_1D size = " << p.xl_1D.size() << endl;
 
         // ===========================
-        // Eigenproblem
+        // Eigenproblem 
         // ===========================
-        VectorXcd eigenvalues  = compute_eigenvalues(Hc);
-        MatrixXcd eigenvectors = compute_eigenvectors(Hc);
+        auto [eigenvalues, eigenvectors] = compute_eigenpairs(Hc);
 
         // save eigenvalues
         {
@@ -168,7 +214,7 @@
 
         MatrixC rho_l = rho_l_space(eigenvectors, rho0);
 
-        // save rho0 in l-space
+        // save rho0 in l-space 
         {
             ofstream fout(out_dir / "rho0_l_space.txt");
             for (int i = 0; i < rho_l.rows(); ++i) {
@@ -177,6 +223,21 @@
                         << rho_l(i,j).imag() << " ";
                 fout << "\n";
             }
+        }
+
+        MatrixC rho_l_site(p.N, p.N);
+        rho_l_site.setZero();
+        if (!p.spin_on) {
+            for (int i = 0; i < p.N; ++i)
+                for (int j = 0; j < p.N; ++j)
+                    rho_l_site(i,j) = rho_l(i,j);
+        } else {
+            const int N_sites = p.N;
+            for (int i = 0; i < N_sites; ++i)
+                for (int j = 0; j < N_sites; ++j)
+                    rho_l_site(i,j) =
+                        rho_l(i, j) +
+                        rho_l(i + N_sites, j + N_sites);
         }
 
         cout << "\nStart simulation...\n";
@@ -220,21 +281,35 @@
                     rho_t(i, i) = history.diag[k][i];
 
                 double dip =
-                    compute_dipole_moment(rho_t, rho_l, xl_eig, p.e);
+                    compute_dipole_moment(rho_t, rho_l_site, xl_eig, p.e, p.spin_on);
                 time_vec[k] = history.time[k];
                 dipole_t[k] = dip;
                 fout << history.time[k] << " " << dip << "\n";
             }
 
         }
+
+        //  compute current Jx, Jy
+        {
+            ofstream fout(out_dir / "current_time_evolution.txt");
+            fout << "# t  Jx  Jy\n";
+
+            for (size_t k = 0; k < history.time.size(); ++k) {
+                fout << history.time[k] << " "
+                    << history.J_x[k] << " "
+                    << history.J_y[k] << "\n";
+            }
+        }
+
         if (time_vec.size() < 2) {
             cerr << "Error: Not enough time points for Fourier analysis (need at least 2)\n";
             return 1;
         }
-        // Fixed frequency resolution (matching Python's 0.005 eV)
+
+        // Fixed frequency resolution 
         double freq_step_eV_au = 0.005/p.au_eV;  // eV
 
-        // p.omega_cut_off is already in a.u. (from params.cpp)
+        // p.omega_cut_off is already in a.u.
         int N_omega = static_cast<int>(p.omega_cut_off / freq_step_eV_au);
 
         VectorXd omega_fourier(N_omega);

@@ -5,7 +5,6 @@
 #include <vector>
 #include <array>
 
-// We need MatrixC available here
 #include "../DensityMatrix/Density.hpp"
 
 using namespace std;
@@ -21,3 +20,5 @@ MatrixC TB_hamiltonian_from_points(
     double t,
     double tolerance_rel = 1e-3
 );
+
+MatrixC spin_tonian(const MatrixC& H);

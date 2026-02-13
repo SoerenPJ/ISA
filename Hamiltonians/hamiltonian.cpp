@@ -48,3 +48,15 @@ MatrixC TB_hamiltonian_from_points(
 
     return H;
 }
+
+
+MatrixC spin_tonian(const MatrixC& H)
+{
+    const int n = H.rows();
+    MatrixC H_spin = MatrixC::Zero(2*n, 2*n);
+
+    H_spin.block(0,0,n,n) = H;
+    H_spin.block(n,n,n,n) = H;
+
+    return H_spin;
+}

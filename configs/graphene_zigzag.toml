@@ -13,6 +13,7 @@ t1 = -2.8
 t2 = -2.8
 mu = 0.0
 gamma = 0.05
+spin_on = true
 
 
 [simulation]
@@ -21,23 +22,23 @@ dt = 0.2
 t0 = 0.0
 t_max = 500.0
 a_tol = 1e-10
-r_tol = 1e-8
+r_tol = 1e-12
 
 [field]
 intensity = 1e15
-mode = "ddf"
+mode = "ddf"       #time_impulse
 phase = 0.0
 omega = 0.2
 t_shift = 200.0
 sigma_gaus = 60.07
 sigma_ddf = 0.01
-ddf_omega = 0.1
 
 [analysis]
-omega_cut_off = 6.0
+omega_cut_off = 5.0
 
 [thermo]
 T = 300
 
 [features]
-coulomb = false
+coulomb = true
+coulomb_onsite_eV = 10.0 # Hubbard U (eV), 5-10 typical for graphene

@@ -70,6 +70,7 @@ struct Params
     // ---- FEATURES (TOML) ----
     // ======================
     bool coulomb_on = false;
+    double coulomb_onsite_eV = 10.0;  // Hubbard U / onsite repulsion (eV), e.g. 5-10 for graphene
 
     // ======================
     // ---- DERIVED ----

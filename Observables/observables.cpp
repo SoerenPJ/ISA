@@ -9,15 +9,19 @@ double compute_dipole_moment(
     const MatrixXcd &rho_t,
     const MatrixXcd &rho0,
     const VectorXd  &xl,
-    int e)
+    int e,
+    bool spin_on)
 {
     int N = xl.size();
     VectorXd rho_ind_diag(N);
 
+    // If spin is not explicitly resolved, multiply by 2 for spin degeneracy.
+    const double prefactor = (spin_on ? -1.0 : -2.0) * static_cast<double>(e);
+
     for(int i = 0; i < N; ++i)
     {
         double val = std::real(rho_t(i,i) - rho0(i,i));
-        rho_ind_diag(i) = -2.0 * e * val;
+        rho_ind_diag(i) = prefactor * val;
     }
 
     return rho_ind_diag.dot(xl);
@@ -65,7 +69,7 @@ void compute_sigma_ext(
         auto integrand = dipole_t.array() * expo.array();
         auto P_w = trapezoid(t, integrand);
 
-        std::complex<double> alpha_w = P_w / (2.0 *  N*a *sigma_ddf * E0);
+        std::complex<double> alpha_w = P_w / (2.0 * au_fs *sigma_ddf * E0);
 
         alpha(w) = alpha_w;
 
@@ -75,6 +79,8 @@ void compute_sigma_ext(
         
     }
 }
+
+
 
 
 
