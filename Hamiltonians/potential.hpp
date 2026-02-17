@@ -53,6 +53,11 @@ public:
     // (graphene etc.). Uses p.xl_2D and p.a as in the bachelor code.
     std::vector<PeierlsPhase> build_peierls_phases(double Bz) const;
 
+    // External (Peierls) phases for SSH/1D chain bonds when B_ext is used.
+    // Returns one phase per bond in get_bonds() order; empty if not SSH/chain.
+    // Uses nominal area a^2 per bond: phi = (e/hbar)*Bz*a^2 in a.u.
+    std::vector<double> build_ssh_external_phases(double Bz) const;
+
     // Bond list (i,j) for nearest neighbours; used for self-consistent induced phase.
     using Bond = std::pair<int, int>;
     std::vector<Bond> get_bonds() const;

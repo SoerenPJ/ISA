@@ -18,6 +18,30 @@ MatrixC TB_hamiltonian(int N, double t1, double t2)
     return H;
 }
 
+MatrixC TB_hamiltonian_SSH_with_phases(
+    int N,
+    double t1,
+    double t2,
+    const std::vector<Bond>& bonds,
+    const std::vector<double>& phase_per_bond)
+{
+    MatrixC H = MatrixC::Zero(N, N);
+    if (phase_per_bond.size() != bonds.size())
+        return H;
+
+    for (size_t idx = 0; idx < bonds.size(); ++idx) {
+        int i = bonds[idx].first;
+        int j = bonds[idx].second;
+        if (i < 0 || j < 0 || i >= N || j >= N) continue;
+        double t = (i % 2 == 0) ? t1 : t2;
+        double phi = phase_per_bond[idx];
+        std::complex<double> hop = t * std::exp(std::complex<double>(0.0, phi));
+        H(i, j) = hop;
+        H(j, i) = std::conj(hop);
+    }
+    return H;
+}
+
 MatrixC TB_hamiltonian_from_points(
     const std::vector<std::array<double,2>>& points,
     double bond_length,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 import math
@@ -15,6 +17,22 @@ def resolve_config_path(arg: str) -> Path:
         if p2.exists() and p2.is_file():
             return p2
     raise FileNotFoundError(f"Could not find config file: {arg} (tried '{p}' and '{p}.toml')")
+
+
+def fnv1a_64(data: bytes) -> int:
+    """Match the simulator's FNV-1a 64-bit hash for folder naming."""
+    h = 14695981039346656037
+    for b in data:
+        h ^= b
+        h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def simulation_dir_from_config(cfg_path: Path) -> Path:
+    cfg_bytes = cfg_path.read_bytes()
+    h = fnv1a_64(cfg_bytes)
+    folder = f"{cfg_path.stem}_{h:x}"
+    return Path("Simulations") / folder
 
 
 def parse_simple_toml(path: Path) -> dict:
@@ -106,7 +124,7 @@ def build_molecule_points(hexagon: np.ndarray, size_x: int, size_y: int, formati
     return unique
 
 
-def plot_points(points: np.ndarray, bond_length: float, title: str = "", label: bool = False) -> None:
+def plot_points(points: np.ndarray, bond_length: float, title: str = "", label: bool = False, out_path: Path | None = None) -> None:
     n = points.shape[0]
     plt.figure(figsize=(8, 8))
     plt.scatter(points[:, 0], points[:, 1], s=20, c="k")
@@ -131,16 +149,25 @@ def plot_points(points: np.ndarray, bond_length: float, title: str = "", label: 
     plt.title(title)
     plt.xlabel("x")
     plt.ylabel("y")
+    if out_path is not None:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.show()
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python3 Ploting/plot_graphene_points.py <config.toml | configs/name>")
+        print("Usage: python3 Ploting/plot_graphene_points.py <config.toml | configs/name | sim_dir>")
         return 1
 
-    cfg_path = resolve_config_path(sys.argv[1])
-    cfg = parse_simple_toml(cfg_path)
+    arg = Path(sys.argv[1])
+    if arg.exists() and arg.is_dir():
+        sim_dir = arg
+        cfg_path = None
+    else:
+        cfg_path = resolve_config_path(sys.argv[1])
+        sim_dir = simulation_dir_from_config(cfg_path)
+
+    cfg = parse_simple_toml(cfg_path) if (cfg_path and cfg_path.is_file()) else {"system": {}}
     sys_cfg = cfg.get("system", {})
 
     lattice = str(sys_cfg.get("lattice", "graphene")).lower()
@@ -158,12 +185,18 @@ def main() -> int:
 
     hex0 = generate_hexagon_start_at_zero(d)
 
-    # Armchair removed: always plots zigzag
-
     pts = build_molecule_points(hex0, size_x=size_x, size_y=size_y, formation=formation, formation_shape=shape, triangle_rule=triangle_rule)
-    title = f"{cfg_path.name} | {formation=} {shape=} {triangle_rule=} | hexagons=({size_x},{size_y}) | atoms={pts.shape[0]}"
+    title_name = cfg_path.name if (cfg_path and cfg_path.is_file()) else sim_dir.name
+    title = f"{title_name} | {formation=} {shape=} {triangle_rule=} | hexagons=({size_x},{size_y}) | atoms={pts.shape[0]}"
     label = ("--label" in sys.argv)
-    plot_points(pts, bond_length=d, title=title, label=label)
+
+    out_path = None
+    if sim_dir.exists():
+        out_dir = sim_dir / "lattice_plot"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "graphene_points.png"
+
+    plot_points(pts, bond_length=d, title=title, label=label, out_path=out_path)
     return 0
 
 

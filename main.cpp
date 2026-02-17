@@ -10,6 +10,7 @@
     #include <boost/numeric/odeint/algebra/range_algebra.hpp>
 
     #include <Eigen/Dense>
+    #include <cmath>
     #include <iostream>
     #include <fstream>
     #include <complex>
@@ -147,21 +148,25 @@
         }
 
         // ===========================
-        // Build Hamiltonian
+        // Build Hamiltonian (initial: no induced phase; external phase only if B_ext)
         // ===========================
         MatrixC Hc;
-        if (p.self_consistent_phase && p.lattice == "graphene" && p.two_dim) {
-            auto bonds = pot.get_bonds();
-            std::vector<double> phi_ext(bonds.size(), 0.0);
-            if (p.B_ext) {
-                auto peierls = pot.build_peierls_phases(pot.compute_Bz());
-                for (size_t k = 0; k < bonds.size() && k < peierls.size(); ++k)
-                    phi_ext[k] = peierls[k].phi;
-            }
-            Hc = TB_hamiltonian_from_points_with_phases(
-                p.xl_2D, p.a, p.t1, bonds, phi_ext, p.spin_on, 1e-3);
-        } else if (p.lattice == "graphene") {
+        if (p.lattice == "graphene") {
+            // Graphene: always build without phases for initial H (equilibrium / rho0).
+            // Phases are applied during time evolution when self_consistent_phase or B_ext.
             Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1);
+        } else if (p.lattice == "ssh" || p.lattice == "chain") {
+            // SSH: same freedom as graphene — with or without external phase on bonds.
+            if (p.B_ext) {
+                auto bonds = pot.get_bonds();
+                auto phi_ext = pot.build_ssh_external_phases(pot.compute_Bz());
+                if (phi_ext.size() == bonds.size())
+                    Hc = TB_hamiltonian_SSH_with_phases(p.N, p.t1, p.t2, bonds, phi_ext);
+                else
+                    Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+            } else {
+                Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+            }
         } else {
             Hc = TB_hamiltonian(p.N, p.t1, p.t2);
         }
@@ -171,6 +176,10 @@
             if (p.B_ext) {
                 pot.apply_peierls_to_spinful_hamiltonian(Hc);
             }
+        }
+
+        if (p.spin_on && p.B_ext && p.zeeman_external) {
+            add_Zeeman_diagonal(Hc, pot.compute_Bz(), p.N, true, 0.5);
         }
 
         // Save Hamiltonian 
@@ -262,6 +271,7 @@
         MatrixC rho_final =
             evolve_rho_over_time(rho_l, Hc, pot, mode, p, history);
 
+        cout << "\n simulation is done\n";
         // save final rho in j-space (site basis) as pairs: Re Im
         {
             ofstream fout(out_dir / "rho_j_space.txt");
@@ -331,11 +341,11 @@
             return 1;
         }
 
-        // Fixed frequency resolution 
+        // Fixed frequency resolution (same as bachelor: 0.005 eV step in a.u.)
         double freq_step_eV_au = 0.005/p.au_eV;  // eV
 
         // p.omega_cut_off is already in a.u.
-        int N_omega = static_cast<int>(p.omega_cut_off / freq_step_eV_au);
+        int N_omega = static_cast<int>((25/p.au_eV) / freq_step_eV_au);
 
         VectorXd omega_fourier(N_omega);
         for (int i = 0; i < N_omega; ++i)
@@ -374,6 +384,16 @@
         }
         
 
+
+        Eigen::VectorXcd dipole_acc;
+        
+        compute_dipole_acceleration(dipole_t, time_vec, omega_fourier, dipole_acc);
+
+        {
+            ofstream fout(out_dir /"dipole_acc.txt");
+            for (int i = 0; i < dipole_acc.size(); ++i)
+                fout << dipole_acc(i).real() << " " << dipole_acc(i).imag() << "\n";
+        }
         cout << "All outputs saved under: " << out_dir << endl;
 
         return 0;

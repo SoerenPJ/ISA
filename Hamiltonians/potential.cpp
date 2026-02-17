@@ -194,9 +194,34 @@ Potential::build_peierls_phases(double Bz) const
     return phases;
 }
 
+std::vector<double> Potential::build_ssh_external_phases(double Bz) const
+{
+    std::vector<double> phases;
+    if (p.two_dim || (p.lattice != "ssh" && p.lattice != "chain"))
+        return phases;
+    auto bonds = get_bonds();
+    phases.reserve(bonds.size());
+    // In a.u. e=hbar=1: phi = Bz * area. Use nominal area a^2 per bond for 1D chain.
+    const double area_per_bond = p.a * p.a;
+    const double phi_uniform = Bz * area_per_bond;
+    for (size_t b = 0; b < bonds.size(); ++b)
+        phases.push_back(phi_uniform);
+    return phases;
+}
+
 std::vector<Potential::Bond> Potential::get_bonds() const
 {
     std::vector<Bond> bonds;
+
+    // 1D SSH/chain: nearest-neighbor bonds (0,1), (1,2), ...
+    if (!p.two_dim && (p.lattice == "ssh" || p.lattice == "chain")) {
+        const int N_sites = static_cast<int>(p.xl_1D.size());
+        bonds.reserve(static_cast<size_t>(N_sites > 1 ? N_sites - 1 : 0));
+        for (int i = 0; i < N_sites - 1; ++i)
+            bonds.emplace_back(i, i + 1);
+        return bonds;
+    }
+
     if (!p.two_dim)
         return bonds;
 

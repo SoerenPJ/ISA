@@ -1,18 +1,18 @@
 [system]
-N = 13
+N = 50
 lattice = "SSH"
 lattice_const = 0.142
 two_dim = false
 
 [hamiltonian]
 t1 = -2.8
-t2 = -3.3
+t2 = -2.8
 mu = 0.0
 gamma = 0.05
 spin_on = false
 
 [simulation]
-dt = 0.2
+dt = 0.1
 t_end = 500
 t0 = 0.0
 a_tol = 1e-10
@@ -20,19 +20,24 @@ r_tol = 1e-12
 use_strict_solver = false
 
 [field]
-intensity = 1e15
-mode = "ddf"
+intensity = 1e13
+mode = "time_impulse" #time_impulse
 omega = 0.2
-t_shift = 200
+t_shift = 150
 sigma_gaus = 60.07
 sigma_ddf = 0.01
 
+B_ext = false
+
 [features]
-spin = false
 coulomb = true
+spin = false
+self_consistent_phase = false
+zeeman_external = false
+zeeman_induced = false
 
 [analysis]
-omega_cut_off = 2.0
+omega_cut_off = 60.0
 
 [thermo]
 T = 300

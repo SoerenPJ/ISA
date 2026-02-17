@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import integrate
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 import os
 import sys
 from pathlib import Path
@@ -77,8 +78,6 @@ au_omega = 0.2/au_eV
 
 
 
-out_dir = "Ploting/sigma_ext"
-
 base_dir = Path(".")
 if len(sys.argv) >= 2:
     arg = Path(sys.argv[1])
@@ -115,20 +114,18 @@ HTB_real = HTB_pairs[..., 0]                # shape (N, N), real part
 
 print("HTB_real shape", HTB_real.shape)
 plt.matshow(HTB_real, cmap='viridis')
+plt.savefig(out_dir / "HTB_matrix.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 #===============Vll matrix=================
 
-V_ll = np.loadtxt(base_dir / "V_ee_spin.txt")
-print("V_ee shape", V_ll.shape)
-plt.matshow(np.real(V_ll), cmap='viridis')
-plt.show()
+
 
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
-from matplotlib.colors import Normalize
+
 from pathlib import Path
 
 # Constants (same as elsewhere)
@@ -179,6 +176,7 @@ if phases_path.exists():
     cbar = fig.colorbar(lc, ax=ax)
     cbar.set_label("Peierls Phase")
     plt.grid(False)
+    plt.savefig(out_dir / "peierls_phases.png", dpi=300, bbox_inches="tight")
     plt.show()
 else:
     print("peierls_phases.txt not found (B_ext was false); skipping Peierls phase plot.")
@@ -206,16 +204,18 @@ plt.plot(sigma_ext[:,0] * au_eV, alpha_real, label='Re(alpha)', color='blue')
 plt.plot(sigma_ext[:,0] * au_eV, alpha_imag, label='Im(alpha)', color='orange')
 plt.legend()
 plt.xlabel('Energy (eV)', fontsize=12)
+plt.savefig(out_dir / "alpha_ext.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 
 
 plt.figure(figsize=(15, 9))
 plt.plot(sigma_ext[:,0]*au_eV, sigma_ext[:,1] * au_nm**2) 
-#plt.yscale('log')
+plt.yscale('log')
 plt.xlabel('Energy (eV)', fontsize=12)
 plt.ylabel('Extinction Cross-Section', fontsize=12)
 plt.xlim(0, (sigma_ext[:,0][-1] * au_eV))  # automated to always go to the last element of au_omega_fourier
 plt.legend()
 plt.grid(True)
+plt.savefig(out_dir / "sigma_ext.png", dpi=300, bbox_inches="tight")
 plt.show()

@@ -117,7 +117,16 @@ struct TimeTonianSolver {
     std::vector<double> combined_phase;  // phi_ext + phi_ind per bond
     std::vector<std::array<double,2>> points_2d;  // copy of xl_2D for rebuilding H with phases
     double t_hop = 0.0;   // hopping t (e.g. p.t1)
+    double t_hop2 = 0.0;  // second hopping for SSH (p.t2)
     double a_bond = 0.0;  // bond length for TB_hamiltonian_from_points_with_phases
+    bool use_ssh_phases = false;  // true for 1D SSH: induced phase only (no external B)
+
+    // Zeeman diagonal: μ_B σ·B_total; which parts of B to include is configurable
+    bool B_ext_on = false;
+    double B_ext_z = 0.0;   // external B_z in a.u. (when B_ext_on)
+    double au_mu_B = 0.5;   // Bohr magneton in a.u. (eℏ/2m_e = 1/2)
+    bool zeeman_use_external = true;  // include B_ext in Zeeman
+    bool zeeman_use_induced = true;   // include B_ind (from A_ind) in Zeeman
 
 
 
@@ -144,6 +153,9 @@ MatrixC evolve_rho_over_time(
     const std::string &mode,
     const Params &p,
     RhoHistory &history);
+
+// Add Zeeman term μ_B σ·B to diagonal of H (uniform B_z). For initial H at t=0 (B_ind = 0).
+void add_Zeeman_diagonal(MatrixC& H, double B_z, int N_sites, bool spin_on, double au_mu_B);
 
 // Post-process stored rho(t) to compute current Jx, Jy and write current_time_evolution.txt
 void compute_current_from_history(

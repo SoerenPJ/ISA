@@ -13,7 +13,7 @@ t1 = -2.8
 t2 = -2.8
 mu = 0.0
 gamma = 0.05
-spin_on = false
+spin_on = true
 
 
 [simulation]
@@ -44,4 +44,6 @@ T = 300
 [features]
 coulomb = true
 coulomb_onsite_eV = 10.0 # Hubbard U (eV), 5-10 typical for graphene
-self_consistent_phase = true  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
+self_consistent_phase = false  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
+zeeman_external = true   
+zeeman_induced = true

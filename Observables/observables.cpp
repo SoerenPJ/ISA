@@ -69,7 +69,7 @@ void compute_sigma_ext(
         auto integrand = dipole_t.array() * expo.array();
         auto P_w = trapezoid(t, integrand);
 
-        std::complex<double> alpha_w = P_w / (2.0 * au_fs *sigma_ddf * E0);
+        std::complex<double> alpha_w =  P_w / (  2.0* (N*a*a) *sigma_ddf * E0);
 
         alpha(w) = alpha_w;
 
@@ -81,7 +81,34 @@ void compute_sigma_ext(
 }
 
 
+void compute_dipole_acceleration(
+    const Eigen::VectorXd &dipole_t, 
+    const Eigen::VectorXd &t, 
+    const Eigen::VectorXd &omega_fourier, Eigen::VectorXcd &dipole_acc
+)
+{
+    const int Nt = t.size();
+    const int Nw = omega_fourier.size();
 
+    dipole_acc.resize(Nw);
+
+    for (int w = 0; w < Nw; ++w)
+    {
+        VectorXcd expo(Nt);
+
+        for (int i = 0; i < Nt; ++i)
+            {
+                expo(i) = std::exp(std::complex<double>(0.0, omega_fourier(w) * t(i)));
+            }
+
+        VectorXcd integrand = dipole_t.cast<std::complex<double>>().array() * expo.array();
+
+        std::complex<double> integral = trapezoid(t, integrand);
+
+        dipole_acc(w) = (omega_fourier(w)*omega_fourier(w)) * integral; 
+    }
+
+}
 
 
 

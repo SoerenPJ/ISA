@@ -63,5 +63,6 @@
     "mutex": "cpp",
     "cfenv": "cpp",
     "cinttypes": "cpp"
-  }
+  },
+  "cmake.sourceDirectory": "/home/soeren/University/masters/2.semester/ISA/scr/tomlplusplus/src/modules"
 }

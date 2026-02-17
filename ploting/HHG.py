@@ -1,10 +1,8 @@
 import numpy as np
-from scipy import integrate
 import matplotlib.pyplot as plt
 import os
 import sys
 from pathlib import Path
-
 
 # ----------------- utilities ----------------- #
 def fnv1a_64(data: bytes) -> int:
@@ -65,7 +63,7 @@ t2 = t1;#// + 0.5
 
 
 # external field parameters
-Intensity = (1e15/au_kg) * (au_s*au_s*au_s)  #// time pules = 1e13 ddf = 1e15
+Intensity = (1e13/au_kg) * (au_s*au_s*au_s)  #// time pules = 1e13 ddf = 1e15
 E0 = np.sqrt((2 *np.pi* Intensity) / (au_c)) #// Electric field amplitude
 
 t_shift = 200 / au_fs
@@ -74,9 +72,12 @@ sigma_ddf = 0.01/au_fs
 
 gamma = 0.01/au_eV
 au_omega = 0.2/au_eV
+au_omega_fourier = 0.0 
 
 
 
+
+out_dir = "Ploting/HHG_plot"
 
 base_dir = Path(".")
 if len(sys.argv) >= 2:
@@ -92,30 +93,38 @@ if len(sys.argv) >= 2:
                 f"Run the simulator first with: ./sim_mkl {cfg}"
             )
 
-# Create subfolder for saving plots (like base_plots); C++ writes .txt in simulation root
-out_dir = base_dir / "current_time_evolution"
+out_dir = base_dir / "HHG_plots"
 out_dir.mkdir(parents=True, exist_ok=True)
 
-au_fs = au_s * 1e15
-data = np.loadtxt(base_dir / "current_time_evolution.txt")
-t = data[:, 0] * au_fs  # time in fs for axis
-J_x = data[:, 1]
-J_y = data[:, 2]
 
-plt.figure(figsize=(8, 6))
-plt.plot(t, J_x)
-plt.xlabel("Time [fs]")
-plt.ylabel(r"$J_x$ [a.u.]")
-plt.title("Current $J_x$ vs time")
-plt.grid(True)
-plt.savefig(out_dir / "current_Jx_plot.png", dpi=300, bbox_inches="tight")
-plt.show()
+dipole_acc_data = np.loadtxt(base_dir/'dipole_acc.txt')
+dipole_acc = dipole_acc_data[:, 0] + 1j * dipole_acc_data[:, 1]  # shape (N,)
+y_axis = np.abs(dipole_acc)**2
 
-plt.figure(figsize=(8, 6))
-plt.plot(t, J_y)
-plt.xlabel("Time [fs]")
-plt.ylabel(r"$J_y$ [a.u.]")
-plt.title("Current $J_y$ vs time")
-plt.grid(True)
-plt.savefig(out_dir / "current_Jy_plot.png", dpi=300, bbox_inches="tight")
+x_val_all = np.loadtxt(base_dir/'sigma_ext.txt')
+omega_eV = x_val_all[:, 0] * au_eV  # frequency in eV (same grid as dipole_acc)
+
+
+# Find resonance frequency (maximum intensity)
+index = np.argmax(y_axis)
+omega_0 = omega_eV[index]
+
+# Normalize axes like the old code
+x_val = omega_eV / omega_0
+y_val = y_axis / y_axis[index]
+
+plt.rc('text', usetex=True)
+
+fig, ax = plt.subplots(figsize=(6,4))
+ax.plot(x_val, y_val, linewidth=2)
+
+ax.set_yscale("log")
+ax.set_xlabel(r'$\hbar\omega /\omega_0 $', fontsize=24)
+ax.set_ylabel(r'$|\ddot{p}(\omega)|^2 / |\ddot{p}(\omega_0)|^2$', fontsize=24)
+
+ax.tick_params(labelsize=12)
+ax.set_xlim(0, 25)
+ax.grid(False)
+
+plt.tight_layout()
 plt.show()

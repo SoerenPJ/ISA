@@ -19,7 +19,278 @@
 using namespace std;
 using namespace boost::numeric::odeint;
 
+// ---------------------------------------------------------------------------
+// Helpers (internal use only) — reduce duplication between observer, RHS, and post-process
+// ---------------------------------------------------------------------------
+namespace {
 
+constexpr double AU_TIME_TO_FS = 2.418884326505e-17 * 1e15;
+
+// Site occupations from density matrix (sum over spin if spin_on).
+Eigen::VectorXd rho_diag_from_rho(const MatrixC& rho, int N_sites, bool spin_on) {
+    Eigen::VectorXd rho_diag(N_sites);
+    if (!spin_on) {
+        for (int i = 0; i < N_sites; ++i)
+            rho_diag(i) = std::real(rho(i, i));
+    } else {
+        for (int i = 0; i < N_sites; ++i)
+            rho_diag(i) = std::real(rho(i, i)) + std::real(rho(i + N_sites, i + N_sites));
+    }
+    return rho_diag;
+}
+
+// Bond currents J_l_x, J_l_y from rho and current operators J_x, J_y.
+void compute_bond_currents(
+    const MatrixC& rho,
+    const MatrixC& J_x, const MatrixC& J_y,
+    const std::vector<std::pair<int,int>>& bonds,
+    bool spin_on, int N_sites,
+    Eigen::VectorXd& J_l_x, Eigen::VectorXd& J_l_y)
+{
+    MatrixC rho_J_x = rho * J_x;
+    MatrixC rho_J_y = rho * J_y;
+    J_l_x.setZero();
+    J_l_y.setZero();
+    for (size_t b = 0; b < bonds.size(); ++b) {
+        const int i = bonds[b].first;
+        const int j = bonds[b].second;
+        double cx = std::imag(rho_J_x(i, j));
+        double cy = std::imag(rho_J_y(i, j));
+        if (spin_on) {
+            cx += std::imag(rho_J_x(i + N_sites, j + N_sites));
+            cy += std::imag(rho_J_y(i + N_sites, j + N_sites));
+        }
+        J_l_x(i) += cx;
+        J_l_x(j) -= cx;
+        J_l_y(i) += cy;
+        J_l_y(j) -= cy;
+    }
+}
+
+// Current operators J_x, J_y = (-i e/hbar) [H, P_x/y].
+void compute_current_operators(
+    const MatrixC& H, const MatrixC& P_x, const MatrixC& P_y,
+    double e_over_hbar,
+    MatrixC& J_x, MatrixC& J_y)
+{
+    const std::complex<double> im(0.0, 1.0);
+    J_x.noalias() = -im * e_over_hbar * (H * P_x - P_x * H);
+    J_y.noalias() = -im * e_over_hbar * (H * P_y - P_y * H);
+}
+
+// Add external potential to H diagonal (per site; duplicate for spin if spin_on).
+void add_Vext_to_H(MatrixC& H, const Eigen::VectorXd& Vext, bool spin_on, int N_sites) {
+    for (int i = 0; i < N_sites; ++i) {
+        std::complex<double> v(Vext(i), 0.0);
+        H(i, i) += v;
+        if (spin_on)
+            H(i + N_sites, i + N_sites) += v;
+    }
+}
+
+// Add Hartree potential to H diagonal from rho_diag and rho0_diag.
+void add_Hartree_to_H(
+    MatrixC& H,
+    const Eigen::VectorXd& rho_diag, const Eigen::VectorXd& rho0_diag,
+    const Eigen::MatrixXd& V_ee, double e_charge, double hartree_factor,
+    bool spin_on, int N_sites)
+{
+    Eigen::VectorXd rho_l_ind = hartree_factor * e_charge * (rho_diag - rho0_diag);
+    Eigen::VectorXd V_hartree = V_ee * rho_l_ind;
+    for (int i = 0; i < N_sites; ++i) {
+        std::complex<double> v(e_charge * V_hartree(i), 0.0);
+        H(i, i) += v;
+        if (spin_on)
+            H(i + N_sites, i + N_sites) += v;
+    }
+}
+
+// B_ind_z from discrete curl of A_ind on 2D lattice: B_z = (∂A_y/∂x - ∂A_x/∂y).
+// Uses bonds and points_2d; returns per-site B_ind_z (a.u.).
+Eigen::VectorXd compute_B_ind_z_2d(TimeTonianSolver* s) {
+    const int N_sites = s->N_sites;
+    Eigen::VectorXd B_ind_z = Eigen::VectorXd::Zero(N_sites);
+    if (s->points_2d.size() != static_cast<size_t>(N_sites) || s->bonds.empty() || s->a_bond <= 0.0)
+        return B_ind_z;
+
+    Eigen::VectorXd sum_curl(N_sites);
+    Eigen::VectorXd neighbor_count(N_sites);
+    sum_curl.setZero();
+    neighbor_count.setZero();
+
+    for (size_t b = 0; b < s->bonds.size(); ++b) {
+        const int i = s->bonds[b].first;
+        const int j = s->bonds[b].second;
+        if (i < 0 || j < 0 || i >= N_sites || j >= N_sites) continue;
+        double xi = s->points_2d[i][0], yi = s->points_2d[i][1];
+        double xj = s->points_2d[j][0], yj = s->points_2d[j][1];
+        double dx = xj - xi, dy = yj - yi;
+        // (∂A_y/∂x - ∂A_x/∂y) approximated from bond (i,j)
+        double circ = (s->A_ind_y(j) - s->A_ind_y(i)) * dx - (s->A_ind_x(j) - s->A_ind_x(i)) * dy;
+        sum_curl(i) += circ;
+        neighbor_count(i) += 1.0;
+    }
+
+    const double a2 = s->a_bond * s->a_bond;
+    for (int i = 0; i < N_sites; ++i) {
+        if (neighbor_count(i) > 0.0 && a2 > 0.0)
+            B_ind_z(i) = sum_curl(i) / (neighbor_count(i) * a2);
+    }
+    return B_ind_z;
+}
+
+// Add Zeeman term μ_B σ·B to diagonal: spin-up +μ_B B_z, spin-down −μ_B B_z (σ_z convention).
+void add_Zeeman_to_H(MatrixC& H, const Eigen::VectorXd& B_total_z, bool spin_on, int N_sites, double au_mu_B) {
+    for (int i = 0; i < N_sites; ++i) {
+        double zeeman = au_mu_B * B_total_z(i);
+        H(i, i) += std::complex<double>(zeeman, 0.0);
+        if (spin_on)
+            H(i + N_sites, i + N_sites) += std::complex<double>(-zeeman, 0.0);
+    }
+}
+
+// Ensure equilibrium bond currents J_l_eq are computed once (side effect on solver).
+void ensure_J_l_eq_computed(TimeTonianSolver* s) {
+    if (s->J_l_eq_computed)
+        return;
+    const int N = s->N_sites;
+    const int N_mat = s->N_mat;
+    const std::complex<double> im(0.0, 1.0);
+    const double eoh = s->e_charge / s->hbar;
+
+    MatrixC H_eq = s->H0;
+    Eigen::VectorXd Vext0 = s->get_potential(0.0);
+    add_Vext_to_H(H_eq, Vext0, s->spin_on, N);
+
+    MatrixC J_x_eq(N_mat, N_mat), J_y_eq(N_mat, N_mat);
+    compute_current_operators(H_eq, s->P_x, s->P_y, eoh, J_x_eq, J_y_eq);
+
+    s->J_l_x_eq.resize(N);
+    s->J_l_y_eq.resize(N);
+    compute_bond_currents(s->rho0, J_x_eq, J_y_eq, s->bonds, s->spin_on, N, s->J_l_x_eq, s->J_l_y_eq);
+    s->J_l_eq_computed = true;
+}
+
+// Build full H for time t and density rho (TB with phases when self-consistent, then + Vext + Hartree).
+// Does not update H_prev (caller does that in RHS if needed).
+void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC& H_out) {
+    const int N_sites = s->N_sites;
+    const int N_mat   = s->N_mat;
+    const bool spin   = s->spin_on;
+    const double eoh  = s->e_charge / s->hbar;
+    Eigen::VectorXd Vext = s->get_potential(t);
+
+    const bool can_use_phases_2d = s->self_consistent_on && !s->use_ssh_phases && !s->bonds.empty() &&
+        static_cast<int>(s->points_2d.size()) == N_sites &&
+        static_cast<int>(s->phi_ext.size()) == static_cast<int>(s->bonds.size()) &&
+        s->H_prev.rows() == N_mat;
+
+    const bool can_use_phases_1d = s->self_consistent_on && s->use_ssh_phases && !s->bonds.empty() &&
+        static_cast<int>(s->phi_ext.size()) == static_cast<int>(s->bonds.size()) &&
+        s->H_prev.rows() == N_mat;
+
+    if (can_use_phases_2d) {
+        MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
+        compute_current_operators(s->H_prev, s->P_x, s->P_y, eoh, J_x, J_y);
+
+        Eigen::VectorXd J_l_x(N_sites), J_l_y(N_sites);
+        compute_bond_currents(rho, J_x, J_y, s->bonds, spin, N_sites, J_l_x, J_l_y);
+
+        ensure_J_l_eq_computed(s);
+
+        Eigen::VectorXd J_l_x_ind = J_l_x - s->J_l_x_eq;
+        Eigen::VectorXd J_l_y_ind = J_l_y - s->J_l_y_eq;
+        s->A_ind_x.noalias() = (s->au_mu_0 / s->area_2d) * (s->V_ee * J_l_x_ind);
+        s->A_ind_y.noalias() = (s->au_mu_0 / s->area_2d) * (s->V_ee * J_l_y_ind);
+
+        if (s->phi_ind.size() != s->bonds.size())
+            s->phi_ind.resize(s->bonds.size());
+        if (s->combined_phase.size() != s->bonds.size())
+            s->combined_phase.resize(s->bonds.size());
+
+        for (size_t b = 0; b < s->bonds.size(); ++b) {
+            const int i = s->bonds[b].first;
+            const int j = s->bonds[b].second;
+            double dx = s->points_2d[j][0] - s->points_2d[i][0];
+            double dy = s->points_2d[j][1] - s->points_2d[i][1];
+            double A_avg_x = (s->A_ind_x(i) + s->A_ind_x(j)) * 0.5;
+            double A_avg_y = (s->A_ind_y(i) + s->A_ind_y(j)) * 0.5;
+            s->phi_ind[b] = (s->e_charge / s->hbar) * (A_avg_x * dx + A_avg_y * dy);
+            s->combined_phase[b] = s->phi_ext[b] + s->phi_ind[b];
+        }
+
+        H_out = TB_hamiltonian_from_points_with_phases(
+            s->points_2d, s->a_bond, s->t_hop, s->bonds, s->combined_phase, spin, 1e-3);
+    } else if (can_use_phases_1d) {
+        // 1D SSH: induced phase only (no external B). Phase from A_ind_x and x_pos.
+        MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
+        compute_current_operators(s->H_prev, s->P_x, s->P_y, eoh, J_x, J_y);
+
+        Eigen::VectorXd J_l_x(N_sites), J_l_y(N_sites);
+        compute_bond_currents(rho, J_x, J_y, s->bonds, spin, N_sites, J_l_x, J_l_y);
+
+        ensure_J_l_eq_computed(s);
+
+        Eigen::VectorXd J_l_x_ind = J_l_x - s->J_l_x_eq;
+        s->A_ind_x.noalias() = (s->au_mu_0 / s->area_2d) * (s->V_ee * J_l_x_ind);
+        // A_ind_y unused for 1D; leave zeroed
+
+        if (s->phi_ind.size() != s->bonds.size())
+            s->phi_ind.resize(s->bonds.size());
+        if (s->combined_phase.size() != s->bonds.size())
+            s->combined_phase.resize(s->bonds.size());
+
+        for (size_t b = 0; b < s->bonds.size(); ++b) {
+            const int i = s->bonds[b].first;
+            const int j = s->bonds[b].second;
+            double dx = s->x_pos(j) - s->x_pos(i);
+            double A_avg_x = (s->A_ind_x(i) + s->A_ind_x(j)) * 0.5;
+            s->phi_ind[b] = (s->e_charge / s->hbar) * A_avg_x * dx;
+            s->combined_phase[b] = s->phi_ext[b] + s->phi_ind[b];  // phi_ext = 0 for SSH
+        }
+
+        MatrixC H_ssh = TB_hamiltonian_SSH_with_phases(
+            N_sites, s->t_hop, s->t_hop2, s->bonds, s->combined_phase);
+        if (spin) {
+            H_out.resize(N_mat, N_mat);
+            H_out.block(0, 0, N_sites, N_sites) = H_ssh;
+            H_out.block(N_sites, N_sites, N_sites, N_sites) = H_ssh;
+        } else {
+            H_out = H_ssh;
+        }
+    } else {
+        H_out = s->H0;
+    }
+
+    add_Vext_to_H(H_out, Vext, spin, N_sites);
+
+    if (s->coulomb_on) {
+        Eigen::VectorXd rho_diag = rho_diag_from_rho(rho, N_sites, spin);
+        const double hartree_factor = spin ? 1.0 : 2.0;
+        add_Hartree_to_H(H_out, rho_diag, s->rho0_diag, s->V_ee, s->e_charge, hartree_factor, spin, N_sites);
+    }
+
+    // Zeeman diagonal: μ_B σ·B; B = (zeeman_use_external ? B_ext : 0) + (zeeman_use_induced ? B_ind : 0)
+    if (spin) {
+        Eigen::VectorXd B_total_z = Eigen::VectorXd::Zero(N_sites);
+        if (s->zeeman_use_external && s->B_ext_on)
+            B_total_z.array() += s->B_ext_z;
+        if (s->zeeman_use_induced && s->self_consistent_on && !s->use_ssh_phases && static_cast<int>(s->points_2d.size()) == N_sites)
+            B_total_z += compute_B_ind_z_2d(s);
+        add_Zeeman_to_H(H_out, B_total_z, true, N_sites, s->au_mu_B);
+    }
+}
+
+} // namespace
+
+void add_Zeeman_diagonal(MatrixC& H, double B_z, int N_sites, bool spin_on, double au_mu_B) {
+    const double zeeman = au_mu_B * B_z;
+    for (int i = 0; i < N_sites; ++i) {
+        H(i, i) += std::complex<double>(zeeman, 0.0);
+        if (spin_on)
+            H(i + N_sites, i + N_sites) += std::complex<double>(-zeeman, 0.0);
+    }
+}
 
 // -------------------------------------------------------------
 RhoObserver::RhoObserver(
@@ -33,15 +304,11 @@ RhoObserver::RhoObserver(
 // -------------------------------------------------------------
 // RhoObserver operator() IMPLEMENTATION
 // -------------------------------------------------------------
-// =============================================================
 void RhoObserver::operator()(
     const std::vector<std::complex<double>> &rho_vec,
-    double t
-) {
-    // store every observer call (i.e., every integrator step)
+    double t)
+{
     counter++;
-
-    // Use solver's sizes so this works with and without explicit spin
     const int N_sites = solver->N_sites;
     const int N_mat   = solver->N_mat;
     const bool spin   = solver->spin_on;
@@ -49,161 +316,37 @@ void RhoObserver::operator()(
     hist.time.push_back(t);
     hist.diag.emplace_back(N_sites);
 
-    // rho_vec is flattened row-major N_mat × N_mat
-    // Map to site occupations; if spin is on, sum the diagonal of both spin blocks.
     for (int i = 0; i < N_sites; ++i) {
-        const int idx_up = i * N_mat + i;
-        double occ = std::real(rho_vec[idx_up]);
-        if (spin) {
-            const int j = i + N_sites;
-            const int idx_down = j * N_mat + j;
-            occ += std::real(rho_vec[idx_down]);
-        }
+        double occ = std::real(rho_vec[i * N_mat + i]);
+        if (spin)
+            occ += std::real(rho_vec[(i + N_sites) * N_mat + (i + N_sites)]);
         hist.diag.back()[i] = occ;
     }
 
-    // Store full rho(t) for post-processing current calculation
-    
     MatrixC rho_k(N_mat, N_mat);
     for (int i = 0; i < N_mat; ++i)
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
     hist.rho_full.push_back(rho_k);
-    
-    // ==============================
-    // Compute current
-    // ==============================
-    const std::complex<double> im(0.0, 1.0);
-    double e_over_hbar = solver->e_charge / solver->hbar;
 
-    // H at current (t, rho): start from H0 so J and A_ind follow the same time dependence as the pulse.
-    // (Using H_prev can lag and give flat A_ind when observer runs after each step.)
-    MatrixC H_t = solver->H0;
+    // H(t, rho) same as RHS so stored J and A_ind match dynamics
+    MatrixC H_t(N_mat, N_mat);
+    build_H_for_time(solver, rho_k, t, H_t);
 
-    // external potential at current time t
-    Eigen::VectorXd Vext = solver->get_potential(t);
+    const double eoh = solver->e_charge / solver->hbar;
+    MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
+    compute_current_operators(H_t, solver->P_x, solver->P_y, eoh, J_x, J_y);
 
-    if (solver->coulomb_on) {
+    hist.J_x.push_back(std::real((rho_k * J_x).trace()));
+    hist.J_y.push_back(std::real((rho_k * J_y).trace()));
 
-    Eigen::VectorXd rho_diag(solver->N_sites);
-
-    if (!solver->spin_on) {
-        for (int i = 0; i < solver->N_sites; ++i)
-            rho_diag(i) = std::real(rho_k(i, i));
-    } else {
-        for (int i = 0; i < solver->N_sites; ++i)
-            rho_diag(i) =
-                std::real(rho_k(i, i)) +
-                std::real(rho_k(i + solver->N_sites,
-                                i + solver->N_sites));
-    }
-
-    const double hartree_factor = solver->spin_on ? 1.0 : 2.0;
-
-    Eigen::VectorXd rho_l_ind =
-        hartree_factor * solver->e_charge *
-        (rho_diag - solver->rho0_diag);
-
-    Eigen::VectorXd V_hartree =
-        solver->V_ee * rho_l_ind;
-
-    for (int i = 0; i < solver->N_sites; ++i) {
-        std::complex<double> v(
-            solver->e_charge * V_hartree(i), 0.0);
-
-        H_t(i,i) += v;
-
-        if (solver->spin_on)
-            H_t(i + solver->N_sites,
-                i + solver->N_sites) += v;
-    }
-}
-
-    for (int i = 0; i < solver->N_sites; ++i) {
-        std::complex<double> v(Vext(i), 0.0);
-        H_t(i, i) += v;
-
-        if (solver->spin_on)
-            H_t(i + solver->N_sites, i + solver->N_sites) += v;
-    }
-
-
-    // Current operators
-    MatrixC J_x(N_mat, N_mat);
-    MatrixC J_y(N_mat, N_mat);
-
-    J_x.noalias() = -im * e_over_hbar * (H_t * solver->P_x - solver->P_x * H_t);
-    J_y.noalias() = -im * e_over_hbar * (H_t * solver->P_y - solver->P_y * H_t);
-
-    // Expectation values
-    double Jx_exp = std::real((rho_k * J_x).trace());
-    double Jy_exp = std::real((rho_k * J_y).trace());
-
-    // Store for plotting
-    hist.J_x.push_back(Jx_exp);
-    hist.J_y.push_back(Jy_exp);
-
-    // Compute and store A_ind from *induced* current (J_l - J_l_eq) so it starts at 0 and evolves with the pulse
     if (solver->self_consistent_on && !solver->bonds.empty() &&
         solver->bonds.size() == solver->phi_ext.size()) {
-        MatrixC rho_J_x = rho_k * J_x;
-        MatrixC rho_J_y = rho_k * J_y;
-        Eigen::VectorXd J_l_x = Eigen::VectorXd::Zero(N_sites);
-        Eigen::VectorXd J_l_y = Eigen::VectorXd::Zero(N_sites);
-        for (size_t b = 0; b < solver->bonds.size(); ++b) {
-            const int i = solver->bonds[b].first;
-            const int j = solver->bonds[b].second;
-            double cx = std::imag(rho_J_x(i, j));
-            double cy = std::imag(rho_J_y(i, j));
-            if (solver->spin_on) {
-                cx += std::imag(rho_J_x(i + N_sites, j + N_sites));
-                cy += std::imag(rho_J_y(i + N_sites, j + N_sites));
-            }
-            J_l_x(i) += cx;
-            J_l_x(j) -= cx;
-            J_l_y(i) += cy;
-            J_l_y(j) -= cy;
-        }
-        // Equilibrium J_l (once) so induced current = J_l - J_l_eq → A_ind starts at 0
-        if (!solver->J_l_eq_computed) {
-            Eigen::VectorXd Vext0 = solver->get_potential(0.0);
-            MatrixC H_eq = solver->H0;
-            for (int i = 0; i < N_sites; ++i) {
-                std::complex<double> v(Vext0(i), 0.0);
-                H_eq(i, i) += v;
-                if (solver->spin_on) H_eq(i + N_sites, i + N_sites) += v;
-            }
-            const std::complex<double> im(0.0, 1.0);
-            const double eoh = solver->e_charge / solver->hbar;
-            MatrixC J_x_eq(N_mat, N_mat), J_y_eq(N_mat, N_mat);
-            J_x_eq.noalias() = -im * eoh * (H_eq * solver->P_x - solver->P_x * H_eq);
-            J_y_eq.noalias() = -im * eoh * (H_eq * solver->P_y - solver->P_y * H_eq);
-            MatrixC rho0_Jx = solver->rho0 * J_x_eq;
-            MatrixC rho0_Jy = solver->rho0 * J_y_eq;
-            solver->J_l_x_eq.resize(N_sites);
-            solver->J_l_y_eq.resize(N_sites);
-            solver->J_l_x_eq.setZero();
-            solver->J_l_y_eq.setZero();
-            for (size_t b = 0; b < solver->bonds.size(); ++b) {
-                const int i = solver->bonds[b].first;
-                const int j = solver->bonds[b].second;
-                double cx = std::imag(rho0_Jx(i, j));
-                double cy = std::imag(rho0_Jy(i, j));
-                if (solver->spin_on) {
-                    cx += std::imag(rho0_Jx(i + N_sites, j + N_sites));
-                    cy += std::imag(rho0_Jy(i + N_sites, j + N_sites));
-                }
-                solver->J_l_x_eq(i) += cx;
-                solver->J_l_x_eq(j) -= cx;
-                solver->J_l_y_eq(i) += cy;
-                solver->J_l_y_eq(j) -= cy;
-            }
-            solver->J_l_eq_computed = true;
-        }
-        Eigen::VectorXd J_l_x_ind = J_l_x - solver->J_l_x_eq;
-        Eigen::VectorXd J_l_y_ind = J_l_y - solver->J_l_y_eq;
-        Eigen::VectorXd A_x = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * J_l_x_ind);
-        Eigen::VectorXd A_y = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * J_l_y_ind);
+        ensure_J_l_eq_computed(solver);  // in case build_H_for_time didn't (e.g. first step)
+        Eigen::VectorXd J_l_x(N_sites), J_l_y(N_sites);
+        compute_bond_currents(rho_k, J_x, J_y, solver->bonds, spin, N_sites, J_l_x, J_l_y);
+        Eigen::VectorXd A_x = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * (J_l_x - solver->J_l_x_eq));
+        Eigen::VectorXd A_y = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * (J_l_y - solver->J_l_y_eq));
         hist.A_ind_x.push_back(std::vector<double>(A_x.data(), A_x.data() + N_sites));
         hist.A_ind_y.push_back(std::vector<double>(A_y.data(), A_y.data() + N_sites));
     } else if (solver->self_consistent_on) {
@@ -211,11 +354,8 @@ void RhoObserver::operator()(
         hist.A_ind_y.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
     }
 
-    // simple progress print
-    if (counter % 5000 == 0) {
-        double t_fs = t * 2.418884326505e-17 * 1e15;
-        std::cout << "\r t = " << t_fs << " fs" << std::flush;
-    }
+    if (counter % 5000 == 0)
+        std::cout << "\r t = " << (t * AU_TIME_TO_FS) << " fs" << std::flush;
 }
 
 
@@ -317,188 +457,28 @@ void TimeTonianSolver::operator()(
     std::vector<std::complex<double>> &drho_dt_vec,
     const double t)
 {
-    const int N_sites_local = N_sites;
-    const int N_mat_local   = N_mat;
+    const int N_mat_local = N_mat;
 
-    // --- reshape rho_vec → rho_tmp ---
     for (int i = 0, k = 0; i < N_mat_local; ++i)
         for (int j = 0; j < N_mat_local; ++j, ++k)
-            rho_tmp(i,j) = rho_vec[k];
+            rho_tmp(i, j) = rho_vec[k];
 
-    // --- get diagonal potential Vext(t) ---
-    const Eigen::VectorXd Vext = get_potential(t);
+    if (self_consistent_on && H_prev.rows() == 0)
+        H_prev = H0;
 
-    // --- Build H_tmp: either from self-consistent induced phase or from H0 ---
-    if (self_consistent_on && !bonds.empty() && static_cast<int>(points_2d.size()) == N_sites_local &&
-        static_cast<int>(phi_ext.size()) == static_cast<int>(bonds.size())) {
-
-        if (H_prev.rows() == 0)
-            H_prev = H0;
-
-        const std::complex<double> im(0.0, 1.0);
-        const double e_over_hbar = e_charge / hbar;
-        MatrixC J_x(N_mat_local, N_mat_local);
-        MatrixC J_y(N_mat_local, N_mat_local);
-        J_x.noalias() = -im * e_over_hbar * (H_prev * P_x - P_x * H_prev);
-        J_y.noalias() = -im * e_over_hbar * (H_prev * P_y - P_y * H_prev);
-
-        MatrixC rho_J_x = rho_tmp * J_x;
-        MatrixC rho_J_y = rho_tmp * J_y;
-
-        J_l_x.setZero();
-        J_l_y.setZero();
-        for (size_t b = 0; b < bonds.size(); ++b) {
-            const int i = bonds[b].first;
-            const int j = bonds[b].second;
-            double cx = std::imag(rho_J_x(i, j));
-            double cy = std::imag(rho_J_y(i, j));
-            if (spin_on) {
-                cx += std::imag(rho_J_x(i + N_sites_local, j + N_sites_local));
-                cy += std::imag(rho_J_y(i + N_sites_local, j + N_sites_local));
-            }
-            J_l_x(i) += cx;
-            J_l_x(j) -= cx;
-            J_l_y(i) += cy;
-            J_l_y(j) -= cy;
-        }
-
-        // Equilibrium site current: A_ind should be from *induced* current (J_l - J_l_eq)
-        // so it starts at zero before the pulse and evolves with the dipole/current.
-        if (!J_l_eq_computed) {
-            const Eigen::VectorXd Vext0 = get_potential(0.0);
-            MatrixC H_eq = H0;
-            for (int i = 0; i < N_sites_local; ++i) {
-                std::complex<double> v(Vext0(i), 0.0);
-                H_eq(i, i) += v;
-                if (spin_on) H_eq(i + N_sites_local, i + N_sites_local) += v;
-            }
-            MatrixC J_x_eq(N_mat_local, N_mat_local), J_y_eq(N_mat_local, N_mat_local);
-            J_x_eq.noalias() = -im * e_over_hbar * (H_eq * P_x - P_x * H_eq);
-            J_y_eq.noalias() = -im * e_over_hbar * (H_eq * P_y - P_y * H_eq);
-            MatrixC rho0_Jx = rho0 * J_x_eq;
-            MatrixC rho0_Jy = rho0 * J_y_eq;
-            J_l_x_eq.resize(N_sites_local);
-            J_l_y_eq.resize(N_sites_local);
-            J_l_x_eq.setZero();
-            J_l_y_eq.setZero();
-            for (size_t b = 0; b < bonds.size(); ++b) {
-                const int i = bonds[b].first;
-                const int j = bonds[b].second;
-                double cx = std::imag(rho0_Jx(i, j));
-                double cy = std::imag(rho0_Jy(i, j));
-                if (spin_on) {
-                    cx += std::imag(rho0_Jx(i + N_sites_local, j + N_sites_local));
-                    cy += std::imag(rho0_Jy(i + N_sites_local, j + N_sites_local));
-                }
-                J_l_x_eq(i) += cx;
-                J_l_x_eq(j) -= cx;
-                J_l_y_eq(i) += cy;
-                J_l_y_eq(j) -= cy;
-            }
-            J_l_eq_computed = true;
-        }
-
-        Eigen::VectorXd J_l_x_ind = J_l_x - J_l_x_eq;
-        Eigen::VectorXd J_l_y_ind = J_l_y - J_l_y_eq;
-        A_ind_x.noalias() = (au_mu_0 / area_2d) * (V_ee * J_l_x_ind);
-        A_ind_y.noalias() = (au_mu_0 / area_2d) * (V_ee * J_l_y_ind);
-
-        if (phi_ind.size() != bonds.size())
-            phi_ind.resize(bonds.size());
-        if (combined_phase.size() != bonds.size())
-            combined_phase.resize(bonds.size());
-
-        for (size_t b = 0; b < bonds.size(); ++b) {
-            const int i = bonds[b].first;
-            const int j = bonds[b].second;
-            double dx = points_2d[j][0] - points_2d[i][0];
-            double dy = points_2d[j][1] - points_2d[i][1];
-            double A_avg_x = (A_ind_x(i) + A_ind_x(j)) * 0.5;
-            double A_avg_y = (A_ind_y(i) + A_ind_y(j)) * 0.5;
-            phi_ind[b] = (e_charge / hbar) * (A_avg_x * dx + A_avg_y * dy);
-            combined_phase[b] = phi_ext[b] + phi_ind[b];
-        }
-
-        H_tmp = TB_hamiltonian_from_points_with_phases(
-            points_2d, a_bond, t_hop, bonds, combined_phase, spin_on, 1e-3);
-    } else {
-        H_tmp = H0;
-    }
-
-    // --- add diagonal external potential ---
-    // Vext is defined per site; if spin is on, apply to both spin blocks.
-    if (!spin_on) {
-        for (int i = 0; i < N_sites_local; ++i)
-            H_tmp(i,i) += std::complex<double>(Vext[i], 0.0);
-    } else {
-        for (int i = 0; i < N_sites_local; ++i) {
-            const std::complex<double> v(Vext[i], 0.0);
-            H_tmp(i,i) += v;                                    // spin-up
-            H_tmp(i + N_sites_local, i + N_sites_local) += v;   // spin-down
-        }
-    }
-
-    //==========================================================
-    //                 ELECTRON–ELECTRON (Hartree) TERM
-    //==========================================================
-    if (coulomb_on) {
-        // Current site occupations from rho_tmp (sum over spin if present)
-        if (!spin_on) {
-            for (int i = 0; i < N_sites_local; ++i)
-                rho_diag(i) = std::real(rho_tmp(i, i));
-        } else {
-            for (int i = 0; i < N_sites_local; ++i) {
-                rho_diag(i) =
-                    std::real(rho_tmp(i, i)) +
-                    std::real(rho_tmp(i + N_sites_local, i + N_sites_local));
-            }
-        }
-
-        // rho_l_ind = (2e or 1e) * (rho - rho0) in site space.
-        // Without explicit spin we multiply by 2 for spin degeneracy.
-        // With explicit spin (spin_on == true) rho_diag already includes both spins,
-        // so we drop the extra factor of 2.
-        const double hartree_factor = spin_on ? 1.0 : 2.0;
-        rho_l_ind.noalias() = hartree_factor * e_charge * (rho_diag - rho0_diag);
-
-        // V_hartree_cached = V_ee * rho_l_ind in site space
-        V_hartree_cached.noalias() = V_ee * rho_l_ind;
-
-        // Add Hartree potential back to H_tmp diagonal (duplicate for spin)
-        if (!spin_on) {
-            for (int i = 0; i < N_sites_local; ++i)
-                H_tmp(i,i) += std::complex<double>(e_charge * V_hartree_cached(i), 0.0);
-        } else {
-            for (int i = 0; i < N_sites_local; ++i) {
-                const std::complex<double> v(e_charge * V_hartree_cached(i), 0.0);
-                H_tmp(i,i) += v;
-                H_tmp(i + N_sites_local, i + N_sites_local) += v;
-            }
-        }
-    }
+    build_H_for_time(this, rho_tmp, t, H_tmp);
 
     if (self_consistent_on && H_tmp.rows() > 0)
         H_prev = H_tmp;
 
-    //==========================================================
-
-    // --- commutator [H,ρ] ---
     comm_tmp.noalias() = H_tmp * rho_tmp;
     comm_tmp.noalias() -= rho_tmp * H_tmp;
 
     const std::complex<double> minus_i(0.0, -1.0);
-
-    // --- drho/dt ---
-    for(int i = 0, k = 0; i < N_mat_local; ++i)
-        for(int j = 0; j < N_mat_local; ++j, ++k)
-        {
-            std::complex<double> comm_val = comm_tmp(i,j);
-            std::complex<double> relax = rho_tmp(i,j) - rho0(i,j);
-
-            drho_dt_tmp(i,j) =
-                minus_i * comm_val - (gamma * 0.5) * relax;
-
-            drho_dt_vec[k] = drho_dt_tmp(i,j);
+    for (int i = 0, k = 0; i < N_mat_local; ++i)
+        for (int j = 0; j < N_mat_local; ++j, ++k) {
+            drho_dt_tmp(i, j) = minus_i * comm_tmp(i, j) - (gamma * 0.5) * (rho_tmp(i, j) - rho0(i, j));
+            drho_dt_vec[k] = drho_dt_tmp(i, j);
         }
 }
 
@@ -580,42 +560,43 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.V_hartree_cached.resize(N_sites);
     solver.V_hartree_cached.setZero();
 
-    solver.self_consistent_on = p.self_consistent_phase && p.two_dim && !p.xl_2D.empty();
+    const bool self_consistent_2d = p.self_consistent_phase && p.two_dim && !p.xl_2D.empty();
+    const bool self_consistent_1d_ssh = p.self_consistent_phase && !p.two_dim &&
+        (p.lattice == "ssh" || p.lattice == "chain") && !p.xl_1D.empty();
+
+    solver.self_consistent_on = self_consistent_2d || self_consistent_1d_ssh;
+
     if (solver.self_consistent_on) {
         solver.bonds = pot.get_bonds();
         solver.phi_ext.resize(solver.bonds.size(), 0.0);
-        if (p.B_ext) {
-            auto peierls = pot.build_peierls_phases(pot.compute_Bz());
-            for (size_t k = 0; k < solver.bonds.size() && k < peierls.size(); ++k)
-                solver.phi_ext[k] = peierls[k].phi;
-        }
-        solver.points_2d = p.xl_2D;
         solver.t_hop = p.t1;
         solver.a_bond = p.a;
         solver.au_mu_0 = p.au_mu_0;
-        solver.area_2d = p.area_2d;
+        solver.area_2d = p.area_2d;  // 1.0 for non-graphene (params)
         solver.J_l_x.resize(N_sites);
         solver.J_l_y.resize(N_sites);
         solver.A_ind_x.resize(N_sites);
         solver.A_ind_y.resize(N_sites);
         solver.J_l_x.setZero();
         solver.J_l_y.setZero();
+
+        if (self_consistent_1d_ssh) {
+            solver.use_ssh_phases = true;
+            solver.t_hop2 = p.t2;
+            // no points_2d; phi_ext stays 0 (no external B on SSH)
+        } else {
+            solver.use_ssh_phases = false;
+            solver.points_2d = p.xl_2D;
+            if (p.B_ext) {
+                auto peierls = pot.build_peierls_phases(pot.compute_Bz());
+                for (size_t k = 0; k < solver.bonds.size() && k < peierls.size(); ++k)
+                    solver.phi_ext[k] = peierls[k].phi;
+            }
+        }
     }
 
     if (solver.coulomb_on) {
-        // Equilibrium site occupations from initial rho (sum over spin if needed)
-        solver.rho0_diag.resize(N_sites);
-        if (!solver.spin_on) {
-            for (int i = 0; i < N_sites; ++i)
-                solver.rho0_diag(i) = std::real(rho_initial_l(i, i));
-        } else {
-            for (int i = 0; i < N_sites; ++i) {
-                solver.rho0_diag(i) =
-                    std::real(rho_initial_l(i, i)) +
-                    std::real(rho_initial_l(i + N_sites, i + N_sites));
-            }
-        }
-
+        solver.rho0_diag = rho_diag_from_rho(rho_initial_l, N_sites, solver.spin_on);
         // Start with zero induced density / Hartree potential
         solver.rho_diag.setZero();
         solver.rho_l_ind.setZero();
@@ -632,6 +613,12 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.get_potential = [&](double t){
         return pot.get_potential(t, mode);
     };
+
+    solver.au_mu_B = 0.5;  // Bohr magneton in a.u.
+    solver.B_ext_on = p.B_ext;
+    solver.B_ext_z = solver.B_ext_on ? pot.compute_Bz() : 0.0;
+    solver.zeeman_use_external = p.zeeman_external;
+    solver.zeeman_use_induced = p.zeeman_induced;
 
    RhoObserver observer(N_sites, history, &solver);
 
@@ -699,30 +686,17 @@ void compute_current_from_history(
     const std::string &out_dir)
 {
     const int N_sites = p.N;
-    const int N_mat   = Hc.rows();
+    const int N_mat  = Hc.rows();
     if (history.rho_full.empty() || history.time.size() != history.rho_full.size()) {
         std::cerr << "compute_current_from_history: empty or mismatched history, skipping.\n";
         return;
     }
 
     const double e_over_hbar = static_cast<double>(p.e) / static_cast<double>(p.au_hbar);
-    const std::complex<double> im(0.0, 1.0);
+    Eigen::VectorXd rho0_diag = rho_diag_from_rho(history.rho_full[0], N_sites, p.spin_on);
 
-    // Equilibrium site occupations (for Hartree) from first stored rho
-    Eigen::VectorXd rho0_diag(N_sites);
-    const MatrixC &rho0_full = history.rho_full[0];
-    if (!p.spin_on) {
-        for (int i = 0; i < N_sites; ++i)
-            rho0_diag(i) = std::real(rho0_full(i, i));
-    } else {
-        for (int i = 0; i < N_sites; ++i)
-            rho0_diag(i) = std::real(rho0_full(i, i)) + std::real(rho0_full(i + N_sites, i + N_sites));
-    }
-
-    // Dipole (position) matrices P_x, P_y: diagonal in site space, duplicated for spin if needed
     MatrixC P_x = MatrixC::Zero(N_mat, N_mat);
     MatrixC P_y = MatrixC::Zero(N_mat, N_mat);
-    
     for (int i = 0; i < N_sites; ++i) {
         double xi = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
         double yi = p.two_dim ? p.xl_2D[i][1] : 0.0;
@@ -736,13 +710,6 @@ void compute_current_from_history(
         }
     }
 
-    MatrixC H_t(N_mat, N_mat);
-    MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
-    Eigen::VectorXd rho_diag(N_sites);
-    Eigen::VectorXd rho_l_ind(N_sites);
-    Eigen::VectorXd V_hartree(N_sites);
-    const double hartree_factor = p.spin_on ? 1.0 : 2.0;
-
     std::ofstream fout(out_dir + "/current_time_evolution.txt");
     if (!fout) {
         std::cerr << "compute_current_from_history: could not open current_time_evolution.txt\n";
@@ -750,50 +717,22 @@ void compute_current_from_history(
     }
     fout << "# t  Jx  Jy\n";
 
+    MatrixC H_t(N_mat, N_mat);
+    MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
+    const double hartree_factor = p.spin_on ? 1.0 : 2.0;
+
     for (size_t k = 0; k < history.time.size(); ++k) {
         const double t = history.time[k];
         const MatrixC &rho_k = history.rho_full[k];
 
-
-
-
-
-
-
-
         H_t = Hc;
-        Eigen::VectorXd Vext = pot.get_potential(t, mode);
-        for (int i = 0; i < N_sites; ++i) {
-            std::complex<double> v(Vext(i), 0.0);
-            H_t(i, i) += v;
-            if (p.spin_on)
-                H_t(i + N_sites, i + N_sites) += v;
-        }
-
+        add_Vext_to_H(H_t, pot.get_potential(t, mode), p.spin_on, N_sites);
         if (p.coulomb_on) {
-            if (!p.spin_on) {
-                for (int i = 0; i < N_sites; ++i)
-                    rho_diag(i) = std::real(rho_k(i, i));
-            } else {
-                for (int i = 0; i < N_sites; ++i)
-                    rho_diag(i) = std::real(rho_k(i, i)) + std::real(rho_k(i + N_sites, i + N_sites));
-            }
-            rho_l_ind.noalias() = hartree_factor * static_cast<double>(p.e) * (rho_diag - rho0_diag);
-            V_hartree.noalias() = p.V_ee * rho_l_ind;
-            for (int i = 0; i < N_sites; ++i) {
-                std::complex<double> v(static_cast<double>(p.e) * V_hartree(i), 0.0);
-                H_t(i, i) += v;
-                if (p.spin_on)
-                    H_t(i + N_sites, i + N_sites) += v;
-            }
+            Eigen::VectorXd rho_diag = rho_diag_from_rho(rho_k, N_sites, p.spin_on);
+            add_Hartree_to_H(H_t, rho_diag, rho0_diag, p.V_ee, p.e, hartree_factor, p.spin_on, N_sites);
         }
 
-        // J_x = (-i e/hbar) [H_t, P_x], J_y = (-i e/hbar) [H_t, P_y]
-        J_x.noalias() = -im * e_over_hbar * (H_t * P_x - P_x * H_t);
-        J_y.noalias() = -im * e_over_hbar * (H_t * P_y - P_y * H_t);
-
-        double Jx_exp = std::real((rho_k * J_x).trace());
-        double Jy_exp = std::real((rho_k * J_y).trace());
-        fout << t << " " << Jx_exp << " " << Jy_exp << "\n";
+        compute_current_operators(H_t, P_x, P_y, e_over_hbar, J_x, J_y);
+        fout << t << " " << std::real((rho_k * J_x).trace()) << " " << std::real((rho_k * J_y).trace()) << "\n";
     }
 }

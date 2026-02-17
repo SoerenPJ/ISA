@@ -81,7 +81,7 @@ def plot_A_ind_vs_time(sim_dir: Path, site_indices=None, out_path=None):
     fig.suptitle("Induced vector potential vs time")
     plt.tight_layout()
     if out_path:
-        plt.savefig(out_path, dpi=150)
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
         print("Saved", out_path)
     plt.show()
 
@@ -108,6 +108,9 @@ def main():
         print("Run ./sim_mkl configs/graphene_zigzag.toml first.")
         sys.exit(1)
 
+    out_dir = sim_dir / "A_ind"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     t, A_ind_x, A_ind_y = load_A_ind(sim_dir)
     print(f"Loaded A_ind: {len(t)} time steps, {A_ind_x.shape[1]} sites")
     # Sanity check: if C++ wrote time-varying A_ind, these ranges should be non-zero
@@ -118,7 +121,7 @@ def main():
     if ax_span_x < 1e-20 and ax_span_y < 1e-20:
         print("Warning: A_ind is constant in time. Rebuild C++ and re-run ./sim_mkl to regenerate A_ind_time_evolution.txt.")
 
-    plot_A_ind_vs_time(sim_dir, out_path=sim_dir / "A_ind_vs_time.png")
+    plot_A_ind_vs_time(sim_dir, out_path=out_dir / "A_ind_vs_time.png")
 
 
 if __name__ == "__main__":

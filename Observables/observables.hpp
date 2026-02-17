@@ -25,3 +25,9 @@ void compute_sigma_ext(
     Eigen::VectorXd &sigma_ext,
     Eigen::VectorXcd &alpha);
 
+void compute_dipole_acceleration(
+    const Eigen::VectorXd &diople_t, 
+    const Eigen::VectorXd &t, 
+    const Eigen::VectorXd &omega_fourier, 
+    Eigen::VectorXcd &dipole_acc
+);

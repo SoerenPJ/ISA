@@ -61,6 +61,10 @@ struct Params
     double sigma_gaus;
     double sigma_ddf;
     double omega_cut_off;
+    /** Time step (fs) for uniform mesh used in Fourier / dipole-acceleration analysis.
+     *  Match bachelor reference (e.g. 0.005 or 0.0025 fs) so adaptive trajectory
+     *  is resampled onto a fixed grid before ∫ p(t) e^(iωt) dt. */
+    double fourier_dt_fs = 0.005;
 
     // ======================
     // ---- THERMO (TOML) ----
@@ -73,6 +77,8 @@ struct Params
     bool coulomb_on = false;
     double coulomb_onsite_eV = 10.0;  // Hubbard U / onsite repulsion (eV), e.g. 5-10 for graphene
     bool self_consistent_phase = false;  // current -> A_ind -> phi_ind -> update hopping (induced phase)
+    bool zeeman_external = true;   // include external B in Zeeman diagonal μ_B σ·B
+    bool zeeman_induced = true;    // include induced B (from A_ind) in Zeeman diagonal
 
     // ======================
     // ---- DERIVED ----
