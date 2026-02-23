@@ -98,18 +98,18 @@ out_dir.mkdir(parents=True, exist_ok=True)
 
 
 dipole_acc_data = np.loadtxt(base_dir/'dipole_acc.txt')
-dipole_acc = dipole_acc_data[:, 0] + 1j * dipole_acc_data[:, 1]  # shape (N,)
+omega_eV = dipole_acc_data[:,0] * au_eV
+dipole_acc = dipole_acc_data[:, 1] + 1j * dipole_acc_data[:, 2]  # shape (N,)
 y_axis = np.abs(dipole_acc)**2
 
-x_val_all = np.loadtxt(base_dir/'sigma_ext.txt')
-omega_eV = x_val_all[:, 0] * au_eV  # frequency in eV (same grid as dipole_acc)
+
 
 
 # Find resonance frequency (maximum intensity)
 index = np.argmax(y_axis)
 omega_0 = omega_eV[index]
 
-# Normalize axes like the old code
+# Normalize axes 
 x_val = omega_eV / omega_0
 y_val = y_axis / y_axis[index]
 
@@ -123,8 +123,14 @@ ax.set_xlabel(r'$\hbar\omega /\omega_0 $', fontsize=24)
 ax.set_ylabel(r'$|\ddot{p}(\omega)|^2 / |\ddot{p}(\omega_0)|^2$', fontsize=24)
 
 ax.tick_params(labelsize=12)
-ax.set_xlim(0, 25)
-ax.grid(False)
+ax.set_xlim(0, 30)
+
+ax.minorticks_on()
+ax.grid(which='major', linestyle='-', linewidth=0.8)
+ax.grid(which='minor', linestyle=':', linewidth=0.5)
+ax.tick_params(axis='x', which='minor', bottom=True)
+
 
 plt.tight_layout()
+plt.savefig(out_dir / "HHG.png", dpi=300, bbox_inches="tight")
 plt.show()

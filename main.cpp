@@ -151,10 +151,18 @@
         // Build Hamiltonian (initial: no induced phase; external phase only if B_ext)
         // ===========================
         MatrixC Hc;
-        if (p.lattice == "graphene") {
-            // Graphene: always build without phases for initial H (equilibrium / rho0).
-            // Phases are applied during time evolution when self_consistent_phase or B_ext.
-            Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1);
+        if (p.lattice == "graphene" || p.lattice == "pentalene") {
+            // Graphene / Pentalene: build from points (remove "|| p.lattice == \"pentalene\"" if pentalene preset removed).
+            Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1, 0.001);
+            if (p.lattice == "pentalene") {
+                int n_bonds = 0;
+                for (int i = 0; i < Hc.rows(); ++i)
+                    for (int j = i + 1; j < Hc.cols(); ++j)
+                        if (std::abs(Hc(i, j)) > 1e-12) n_bonds++;
+                cout << "Pentalene: a=" << p.a << " a.u., bonds=" << n_bonds << " (expect 15)\n";
+                if (n_bonds == 0)
+                    cerr << "WARNING: Pentalene has 0 bonds; dipole will be zero. Check bond length a.\n";
+            }
         } else if (p.lattice == "ssh" || p.lattice == "chain") {
             // SSH: same freedom as graphene — with or without external phase on bonds.
             if (p.B_ext) {
@@ -171,7 +179,7 @@
             Hc = TB_hamiltonian(p.N, p.t1, p.t2);
         }
 
-        if (p.spin_on && !p.self_consistent_phase) {
+        if (p.spin_on) {
             Hc = spin_tonian(Hc);
             if (p.B_ext) {
                 pot.apply_peierls_to_spinful_hamiltonian(Hc);
@@ -282,28 +290,24 @@
                 fout << "\n";
             }
         }
+       
 
         // ===========================
-        // Save dipole evolution
+        // Save dipole evolution (use diagonal-only path to avoid NxN matrix per step)
         // ===========================
         VectorXd time_vec(history.time.size());
         VectorXd dipole_t(history.time.size());
-    
+        VectorXd rho0_diag(p.N);
+        for (int i = 0; i < p.N; ++i)
+            rho0_diag(i) = std::real(rho_l_site(i, i));
+
         {
             ofstream fout(out_dir / "dipole_time_evolution.txt");
             fout << "# time   dipole_moment\n";
 
             for (size_t k = 0; k < history.time.size(); ++k) {
-
-                MatrixC rho_t(p.N, p.N);
-                rho_t.setZero();
-
-
-                for (int i = 0; i < p.N; ++i)
-                    rho_t(i, i) = history.diag[k][i];
-
-                double dip =
-                    compute_dipole_moment(rho_t, rho_l_site, xl_eig, p.e, p.spin_on);
+                VectorXd rho_diag = Eigen::Map<const VectorXd>(history.diag[k].data(), p.N);
+                double dip = compute_dipole_moment_from_diag(rho_diag, rho0_diag, xl_eig, p.e, p.spin_on);
                 time_vec[k] = history.time[k];
                 dipole_t[k] = dip;
                 fout << history.time[k] << " " << dip << "\n";
@@ -341,59 +345,46 @@
             return 1;
         }
 
-        // Fixed frequency resolution (same as bachelor: 0.005 eV step in a.u.)
-        double freq_step_eV_au = 0.005/p.au_eV;  // eV
+        // Controlled by [analysis] run_sigma_ext and run_dipole_acc in TOML (default false = skip for fast runs)
+        if (p.run_sigma_ext || p.run_dipole_acc) {
+            double freq_step_eV_au = p.fourier_dt_fs / p.au_eV;
+            int N_omega = static_cast<int>((p.omega_cut_off) / freq_step_eV_au);
+            VectorXd omega_fourier(N_omega);
+            for (int i = 0; i < N_omega; ++i)
+                omega_fourier(i) = i * freq_step_eV_au;
 
-        // p.omega_cut_off is already in a.u.
-        int N_omega = static_cast<int>((25/p.au_eV) / freq_step_eV_au);
+            if (p.run_sigma_ext) {
+                cout << "\n Calculating Sigma_ext\n";
+                VectorXd sigma_ext;
+                VectorXcd alpha;
+                compute_sigma_ext(
+                    dipole_t, time_vec, omega_fourier,
+                    p.a, p.au_fs, p.E0, p.N, p.au_c, p.sigma_ddf,
+                    sigma_ext, alpha, p.spin_on);
+                {
+                    ofstream fout(out_dir / "alpha_ext.txt");
+                    for (int i = 0; i < alpha.size(); ++i)
+                        fout << alpha(i).real() << " " << alpha(i).imag() << "\n";
+                }
+                {
+                    ofstream fout(out_dir / "sigma_ext.txt");
+                    for (int i = 0; i < sigma_ext.size(); ++i)
+                        fout << omega_fourier(i) << " " << sigma_ext(i) << "\n";
+                }
+            }
 
-        VectorXd omega_fourier(N_omega);
-        for (int i = 0; i < N_omega; ++i)
-            omega_fourier(i) = i * freq_step_eV_au;
-       
-        VectorXd sigma_ext; 
-        VectorXcd alpha;
-        compute_sigma_ext(
-            dipole_t,
-            time_vec,
-            omega_fourier,
-            p.a,
-            p.au_fs,
-            p.E0,
-            p.N,
-            p.au_c,
-            p.sigma_ddf,
-            sigma_ext, 
-            alpha
-            );
-
-      
-        {
-            ofstream fout(out_dir / "alpha_ext.txt");
-            for (int i = 0; i < alpha.size(); ++i) {
-                fout << alpha(i).real() << " "
-                    << alpha(i).imag() << "\n";}
+            if (p.run_dipole_acc) {
+                 cout << "\n Calculating dipole acceleration\n";
+                Eigen::VectorXcd dipole_acc;
+                compute_dipole_acceleration(dipole_t, time_vec, omega_fourier, dipole_acc);
+                {
+                    ofstream fout(out_dir / "dipole_acc.txt");
+                    for (int i = 0; i < dipole_acc.size(); ++i)
+                        fout << omega_fourier(i)<< " " << dipole_acc(i).real() << " " << dipole_acc(i).imag() << "\n";
+                }
+            }
         }
 
-
-        // save sigma_ext
-        {
-            ofstream fout(out_dir / "sigma_ext.txt");
-            for (int i = 0; i < sigma_ext.size(); ++i)
-                fout << omega_fourier(i) << " " << sigma_ext(i) << "\n";
-        }
-        
-
-
-        Eigen::VectorXcd dipole_acc;
-        
-        compute_dipole_acceleration(dipole_t, time_vec, omega_fourier, dipole_acc);
-
-        {
-            ofstream fout(out_dir /"dipole_acc.txt");
-            for (int i = 0; i < dipole_acc.size(); ++i)
-                fout << dipole_acc(i).real() << " " << dipole_acc(i).imag() << "\n";
-        }
         cout << "All outputs saved under: " << out_dir << endl;
 
         return 0;

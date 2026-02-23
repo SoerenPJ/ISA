@@ -1,6 +1,8 @@
 #include "observables.hpp"
-#include <iostream> 
-
+#include <iostream>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace std;
 using namespace Eigen;
@@ -27,6 +29,17 @@ double compute_dipole_moment(
     return rho_ind_diag.dot(xl);
 }
 
+double compute_dipole_moment_from_diag(
+    const VectorXd &rho_diag,
+    const VectorXd &rho0_diag,
+    const VectorXd &xl,
+    int e,
+    bool spin_on)
+{
+    const double prefactor = (spin_on ? -1.0 : -2.0) * static_cast<double>(e);
+    return prefactor * (rho_diag - rho0_diag).dot(xl);
+}
+
 //======================trapezoid INTEGRATION=========================
 std::complex<double> trapezoid(const Eigen::VectorXd &t, const Eigen::VectorXcd &f) {
     assert(t.size() == f.size());
@@ -50,7 +63,7 @@ void compute_sigma_ext(
     int    N,
     double au_c,
     double sigma_ddf,
-    VectorXd &sigma_ext, VectorXcd &alpha)
+    VectorXd &sigma_ext, VectorXcd &alpha, bool spin_on)
 {
     const int Nt = t.size();
     const int Nw = omega_fourier.size();
@@ -60,23 +73,23 @@ void compute_sigma_ext(
     double total_area = (static_cast<double>(N) / 2.0) * hex_area;
 
     sigma_ext.resize(Nw);
-   
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for (int w = 0; w < Nw; ++w) {
         VectorXcd expo(Nt);
         for (int i = 0; i < Nt; ++i)
             expo(i) = std::exp(std::complex<double>(0.0, omega_fourier(w) * t(i)));
 
-        auto integrand = dipole_t.array() * expo.array();
-        auto P_w = trapezoid(t, integrand);
-
-        std::complex<double> alpha_w =  P_w / (  2.0* (N*a*a) *sigma_ddf * E0);
+        VectorXcd integrand = dipole_t.cast<std::complex<double>>().array() * expo.array();
+        std::complex<double> P_w = trapezoid(t, integrand);
+        const double prefactor = (spin_on ? 1.0 : 2.0);
+        std::complex<double> alpha_w =  P_w / (  prefactor * sigma_ddf * E0);
 
         alpha(w) = alpha_w;
 
         sigma_ext(w) =
             4.0 * M_PI * (omega_fourier(w) / (au_c )) * std::imag(alpha_w);
-        
-        
     }
 }
 
@@ -92,22 +105,19 @@ void compute_dipole_acceleration(
 
     dipole_acc.resize(Nw);
 
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for (int w = 0; w < Nw; ++w)
     {
         VectorXcd expo(Nt);
-
         for (int i = 0; i < Nt; ++i)
-            {
-                expo(i) = std::exp(std::complex<double>(0.0, omega_fourier(w) * t(i)));
-            }
+            expo(i) = std::exp(std::complex<double>(0.0, omega_fourier(w) * t(i)));
 
         VectorXcd integrand = dipole_t.cast<std::complex<double>>().array() * expo.array();
-
         std::complex<double> integral = trapezoid(t, integrand);
-
-        dipole_acc(w) = (omega_fourier(w)*omega_fourier(w)) * integral; 
+        dipole_acc(w) = (omega_fourier(w) * omega_fourier(w)) * integral;
     }
-
 }
 
 

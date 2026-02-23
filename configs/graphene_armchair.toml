@@ -4,6 +4,7 @@ formation_shape = "triangle" # rectangle | triangle
 formation = "armchair"
 size_x = 2
 size_y = 2
+rotation_angle_deg = 0
 
 # bond length (nm)
 lattice_const = 0.142
@@ -11,32 +12,34 @@ lattice_const = 0.142
 [hamiltonian]
 t1 = -2.8
 t2 = -2.8
-mu = 0.0
-gamma = 0.05
-spin_on = true
-
+mu = 0.0 #1.89
+gamma = 0.01
+spin_on = false
 
 [simulation]
 use_strict_solver = false
-dt = 0.2
+dt = 0.01
 t0 = 0.0
-t_max = 500.0
-a_tol = 1e-10
-r_tol = 1e-12
+t_max = 1500.0
+a_tol = 1e-12
+r_tol = 1e-14
 
 [field]
-intensity = 1e13
-mode = "time_impulse"       #time_impulse
+intensity = 1e15
+mode = "ddf"       #time_impulse
 phase = 0.0
-omega = 0.2
-t_shift = 200.0
-sigma_gaus = 60.07
+omega = 0.5 # clean = 2.14, all = 2.28
+t_shift = 500.0
+sigma_gaus = 100 #60.07
 sigma_ddf = 0.01
 B_ext = false
 
 
 [analysis]
-omega_cut_off = 5.0
+omega_cut_off = 5 # on res = 69
+fourier_dt_fs = 0.005
+run_sigma_ext = true   
+run_dipole_acc = false 
 
 [thermo]
 T = 300
@@ -45,5 +48,5 @@ T = 300
 coulomb = true
 coulomb_onsite_eV = 10.0 # Hubbard U (eV), 5-10 typical for graphene
 self_consistent_phase = false  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
-zeeman_external = true   
-zeeman_induced = true
+zeeman_external = false   
+zeeman_induced = false

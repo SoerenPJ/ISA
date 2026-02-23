@@ -46,7 +46,12 @@ struct RhoObserver {
     int counter = 0;
     int stride  = 200;
 
-    RhoObserver(int N_, RhoHistory &h, TimeTonianSolver *s, int stride_ = 200);
+    /** If non-null, only record when t >= (*t_output)[*out_idx] (then advance out_idx). Use for strict solver to limit history size. */
+    const std::vector<double>* t_output = nullptr;
+    size_t* out_idx = nullptr;
+
+    RhoObserver(int N_, RhoHistory &h, TimeTonianSolver *s, int stride_ = 200,
+                const std::vector<double>* t_output_ = nullptr, size_t* out_idx_ = nullptr);
 
     void operator()(const std::vector<std::complex<double>> &rho_vec, double t);
 };

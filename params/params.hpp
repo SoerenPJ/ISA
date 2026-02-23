@@ -28,6 +28,8 @@ struct Params
     std::string formation_shape;  //rectangle | triangle
     int size_x = 0;                             
     int size_y = 0;
+    // In-plane rotation angle for 2D lattices (degrees, about z-axis through origin).
+    double rotation_angle_deg = 0.0;
     // ======================
     // ---- HAMILTONIAN (TOML) ----
     // ======================
@@ -46,14 +48,14 @@ struct Params
     // ======================
     bool use_strict_solver = false;
     double t0   = 0.0;
-    double a_tol = 1e-6;
-    double r_tol = 1e-8;
+    double a_tol;
+    double r_tol;
 
     // ======================
     // ---- FIELD (TOML) ----
     // ======================
     double Intensity;
-    std::string field_mode = "time_impulse"; // "time_impulse" | "sinus" | "ddf"
+    std::string field_mode; // "time_impulse" | "sinus" | "ddf"
     double field_phase = 0.0;                // phase offset [rad]
     double au_omega;
     double au_omega_ddf = 0.1 / 27.2113834;  // ddf omega (a.u.), default 0.1 eV
@@ -64,7 +66,11 @@ struct Params
     /** Time step (fs) for uniform mesh used in Fourier / dipole-acceleration analysis.
      *  Match bachelor reference (e.g. 0.005 or 0.0025 fs) so adaptive trajectory
      *  is resampled onto a fixed grid before ∫ p(t) e^(iωt) dt. */
-    double fourier_dt_fs = 0.005;
+    double fourier_dt_fs;
+    /** If false, main simulation skips sigma_ext / alpha_ext (set true in TOML when needed). */
+    bool run_sigma_ext = false;
+    /** If false, main simulation skips dipole acceleration spectrum (set true in TOML when needed). */
+    bool run_dipole_acc = false;
 
     // ======================
     // ---- THERMO (TOML) ----
@@ -74,11 +80,11 @@ struct Params
     // ======================
     // ---- FEATURES (TOML) ----
     // ======================
-    bool coulomb_on = false;
+    bool coulomb_on;
     double coulomb_onsite_eV = 10.0;  // Hubbard U / onsite repulsion (eV), e.g. 5-10 for graphene
-    bool self_consistent_phase = false;  // current -> A_ind -> phi_ind -> update hopping (induced phase)
-    bool zeeman_external = true;   // include external B in Zeeman diagonal μ_B σ·B
-    bool zeeman_induced = true;    // include induced B (from A_ind) in Zeeman diagonal
+    bool self_consistent_phase;  // current -> A_ind -> phi_ind -> update hopping (induced phase)
+    bool zeeman_external;   // include external B in Zeeman diagonal μ_B σ·B
+    bool zeeman_induced;    // include induced B (from A_ind) in Zeeman diagonal
 
     // ======================
     // ---- DERIVED ----

@@ -310,6 +310,7 @@ void Params::load_from_toml(const std::string& filename)
 
     size_x = tbl["system"]["size_x"].value_or(2);
     size_y = tbl["system"]["size_y"].value_or(2);
+    rotation_angle_deg = tbl["system"]["rotation_angle_deg"].value_or(0.0);
 
     // ---- hamiltonian ----
     t1 = tbl["hamiltonian"]["t1"].value_or(-2.8) / au_eV;
@@ -343,13 +344,15 @@ void Params::load_from_toml(const std::string& filename)
     B_ext       = tbl["field"]["B_ext"].value_or(false); 
     omega_cut_off = tbl["analysis"]["omega_cut_off"].value_or(6.0) /au_eV;
     fourier_dt_fs = tbl["analysis"]["fourier_dt_fs"].value_or(0.005);
+    run_sigma_ext = tbl["analysis"]["run_sigma_ext"].value_or(false);
+    run_dipole_acc = tbl["analysis"]["run_dipole_acc"].value_or(false);
 
     // ---- thermo ----
     T = tbl["thermo"]["T"].value_or(300);
 
     // ---- features ----
     coulomb_on = tbl["features"]["coulomb"].value_or(true);
-    coulomb_onsite_eV = tbl["features"]["coulomb_onsite_eV"].value_or(10.0);
+    coulomb_onsite_eV = tbl["features"]["coulomb_onsite_eV"].value_or(5.0);
     self_consistent_phase = tbl["features"]["self_consistent_phase"].value_or(true);
     zeeman_external = tbl["features"]["zeeman_external"].value_or(true);
     zeeman_induced = tbl["features"]["zeeman_induced"].value_or(true);
@@ -365,11 +368,23 @@ void Params::finalize()
     E0 = std::sqrt((2.0 * M_PI * intensity_au) / au_c);
     build_lattice();
 
-    // Effective 2D area for induced vector potential (graphene: unit-cell area * hexagon count)
+    // Effective 2D area for induced vector potential
     if (two_dim && !xl_2D.empty()) {
-        const double hex_area = (3.0 * std::sqrt(3.0) * a * a) * 0.5;
-        int n_hex = std::max(1, size_x * size_y);
-        area_2d = hex_area * static_cast<double>(n_hex);
+        if (lattice == "pentalene") {
+            // Pentalene: use area from bounding box of 13 sites (avoid size_x*size_y)
+            double xmin = xl_2D[0][0], xmax = xl_2D[0][0], ymin = xl_2D[0][1], ymax = xl_2D[0][1];
+            for (const auto& r : xl_2D) {
+                if (r[0] < xmin) xmin = r[0]; if (r[0] > xmax) xmax = r[0];
+                if (r[1] < ymin) ymin = r[1]; if (r[1] > ymax) ymax = r[1];
+            }
+            const double Lx = xmax - xmin + 2.0 * a;
+            const double Ly = ymax - ymin + 2.0 * a;
+            area_2d = std::max(Lx * Ly, 1.0);
+        } else {
+            const double hex_area = (3.0 * std::sqrt(3.0) * a * a) * 0.5;
+            int n_hex = std::max(1, size_x * size_y);
+            area_2d = hex_area * static_cast<double>(n_hex);
+        }
     } else {
         area_2d = 1.0;
     }
@@ -391,9 +406,50 @@ void Params::build_lattice()
         return;
     }
 
+    // --------------- PENTALENE PRESET (remove this whole block if not needed) ---------------
+    if (lattice == "pentalene") {
+        // 13 sites, same geometry/order as TiBOX graphene_molecule ncells=4.5 (a.u.)
+        const double pentalene_x[13] = {
+            2.68530084, 4.02795125, 5.37060167, 6.71325209, 8.05590251,
+            2.68530084, 4.02795125, 5.37060167, 6.71325209, 8.05590251,
+            4.02795125, 5.37060167, 6.71325209
+        };
+        const double pentalene_y[13] = {
+            1.55035916, 0.77517958, 1.55035916, 0.77517958, 1.55035916,
+            3.10071832, 3.87589790, 3.10071832, 3.87589790, 3.10071832,
+            5.42625706, 6.20143664, 5.42625706
+        };
+        xl_2D.reserve(13);
+        for (int i = 0; i < 13; ++i)
+            xl_2D.push_back({ pentalene_x[i], pentalene_y[i] });
+        N = 13;
+        two_dim = true;
+        a = 1.65;  // bond length (a.u.): nn distances ~1.34–1.55; cutoff must exceed 1.55 so bonds are created
+        xl_1D.reserve(13);
+        for (const auto& r : xl_2D)
+            xl_1D.push_back(r[0]);
+        return;
+    }
+    // ----------------------------------------------------------------------------------------
+
     if (lattice == "graphene") {
         const auto pts = build_molecule_points(a, size_x, size_y, formation, formation_shape);
         xl_2D.assign(pts.begin(), pts.end());
+
+        // Optional in-plane rotation (about z-axis through origin) controlled from TOML.
+        if (std::abs(rotation_angle_deg) > 0.0) {
+            const double theta = rotation_angle_deg * (M_PI / 180.0);
+            const double c = std::cos(theta);
+            const double s = std::sin(theta);
+            for (auto &r : xl_2D) {
+                const double x = r[0];
+                const double y = r[1];
+                const double xr = c * x - s * y;
+                const double yr = s * x + c * y;
+                r[0] = xr;
+                r[1] = yr;
+            }
+        }
 
         N = static_cast<int>(xl_2D.size());
         two_dim = true;

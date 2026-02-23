@@ -211,11 +211,15 @@ plt.show()
 
 plt.figure(figsize=(15, 9))
 plt.plot(sigma_ext[:,0]*au_eV, sigma_ext[:,1] * au_nm**2) 
-plt.yscale('log')
+#plt.yscale('log')
 plt.xlabel('Energy (eV)', fontsize=12)
 plt.ylabel('Extinction Cross-Section', fontsize=12)
 plt.xlim(0, (sigma_ext[:,0][-1] * au_eV))  # automated to always go to the last element of au_omega_fourier
+#plt.ylim(10e-2, 10)
 plt.legend()
 plt.grid(True)
+peak_index = np.argmax(sigma_ext[:,1])
+res_freq = sigma_ext[peak_index,0] * au_eV
 plt.savefig(out_dir / "sigma_ext.png", dpi=300, bbox_inches="tight")
+print("the resonance frequency is: ", res_freq )
 plt.show()

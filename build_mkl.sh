@@ -42,7 +42,7 @@ g++ \
   -o sim_mkl
 
 if [ $? -eq 0 ]; then
-    echo "✅ MKL build successful. Run with: ./sim_mkl"
+    echo "✅ MKL build successful. Run with: ./sim_mkl <config.toml>"
 else
     echo "❌ MKL build failed."
 fi

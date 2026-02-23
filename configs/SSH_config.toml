@@ -5,23 +5,23 @@ lattice_const = 0.142
 two_dim = false
 
 [hamiltonian]
-t1 = -2.8
+t1 = -3.3
 t2 = -2.8
 mu = 0.0
-gamma = 0.05
+gamma = 0.02
 spin_on = false
 
 [simulation]
 dt = 0.1
-t_end = 500
+t_max = 500
 t0 = 0.0
 a_tol = 1e-10
 r_tol = 1e-12
 use_strict_solver = false
 
 [field]
-intensity = 1e13
-mode = "time_impulse" #time_impulse
+intensity = 1e15
+mode = "ddf" #time_impulse
 omega = 0.2
 t_shift = 150
 sigma_gaus = 60.07
@@ -37,7 +37,8 @@ zeeman_external = false
 zeeman_induced = false
 
 [analysis]
-omega_cut_off = 60.0
+omega_cut_off = 5.0
+fourier_dt_fs = 0.005
 
 [thermo]
 T = 300

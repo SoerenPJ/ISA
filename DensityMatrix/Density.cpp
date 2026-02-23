@@ -11,6 +11,8 @@
 
 #include <boost/numeric/odeint/stepper/runge_kutta_dopri5.hpp>
 #include <boost/numeric/odeint/stepper/controlled_runge_kutta.hpp>
+#include <boost/numeric/odeint/stepper/generation/generation_runge_kutta_dopri5.hpp>
+#include <boost/numeric/odeint/stepper/generation/make_dense_output.hpp>
 #include <boost/numeric/odeint/integrate/integrate_adaptive.hpp>
 #include <boost/numeric/odeint/integrate/integrate_const.hpp>
 #include <boost/numeric/odeint/algebra/range_algebra.hpp>
@@ -297,9 +299,12 @@ RhoObserver::RhoObserver(
     int N_,
     RhoHistory &h,
     TimeTonianSolver *s,
-    int stride_
+    int stride_,
+    const std::vector<double>* t_output_,
+    size_t* out_idx_
 )
     : N(N_), hist(h), solver(s), stride(stride_)
+    , t_output(t_output_), out_idx(out_idx_)
 {}
 // -------------------------------------------------------------
 // RhoObserver operator() IMPLEMENTATION
@@ -309,6 +314,15 @@ void RhoObserver::operator()(
     double t)
 {
     counter++;
+    // When using uniform output times (strict solver), only record at those times to save memory.
+    if (t_output && out_idx) {
+        if (*out_idx >= t_output->size())
+            return;
+        if (t < (*t_output)[*out_idx] - 1e-14)
+            return;
+        (*out_idx)++;
+    }
+
     const int N_sites = solver->N_sites;
     const int N_mat   = solver->N_mat;
     const bool spin   = solver->spin_on;
@@ -327,7 +341,7 @@ void RhoObserver::operator()(
     for (int i = 0; i < N_mat; ++i)
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
-    hist.rho_full.push_back(rho_k);
+    // Do not store rho_full: main only uses diag, J_x, J_y (saves large memory with strict solver).
 
     // H(t, rho) same as RHS so stored J and A_ind match dynamics
     MatrixC H_t(N_mat, N_mat);
@@ -620,7 +634,18 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.zeeman_use_external = p.zeeman_external;
     solver.zeeman_use_induced = p.zeeman_induced;
 
-   RhoObserver observer(N_sites, history, &solver);
+    // Uniform output times: same grid as non-strict (Fourier/dipole analysis). For strict solver we only record at these times to avoid memory blow-up.
+    const double dt_out_au = p.fourier_dt_fs / p.au_fs;
+    std::vector<double> t_uniform;
+    for (double tt = p.t0; tt <= p.t_end; tt += dt_out_au)
+        t_uniform.push_back(tt);
+    if (t_uniform.empty() || t_uniform.back() < p.t_end - 1e-14 * dt_out_au)
+        t_uniform.push_back(p.t_end);
+
+    size_t out_idx = 0;
+    RhoObserver observer(N_sites, history, &solver, 200,
+                         p.use_strict_solver ? &t_uniform : nullptr,
+                         p.use_strict_solver ? &out_idx : nullptr);
 
     if(p.use_strict_solver) {
         typedef runge_kutta_dopri5<state_type> strict_stepper;
@@ -636,24 +661,52 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
             observer);
     }
     else {
+        // -------- ADAPTIVE + DENSE OUTPUT: output on uniform grid (like Python t_eval) --------
+        // Stepper: adaptive steps internally, but we record state at uniform times via interpolation.
         typedef runge_kutta_dopri5<state_type> error_stepper_type;
         typedef controlled_runge_kutta<error_stepper_type> controlled_stepper_type;
+        typedef boost::numeric::odeint::dense_output_runge_kutta<controlled_stepper_type> dense_stepper_type;
 
         controlled_stepper_type controlled_stepper(
-            default_error_checker<
-                double, range_algebra, default_operations
-            >(p.a_tol, p.r_tol, 1, 1)
+            default_error_checker<double, range_algebra, default_operations>(p.a_tol, p.r_tol, 1, 1)
         );
+        dense_stepper_type dense_stepper(controlled_stepper);
 
-        boost::numeric::odeint::integrate_adaptive(
-            controlled_stepper,
-            solver,
-            rho_vec,
-            p.t0,
-            p.t_end,
-            p.dt,
-            observer
-        );
+        // Uniform output times [t0, t0+dt_out, ...] for Fourier/dipole analysis (match bachelor ref).
+        const double dt_out_au = p.fourier_dt_fs / p.au_fs;
+        std::vector<double> t_uniform;
+        for (double tt = p.t0; tt <= p.t_end; tt += dt_out_au)
+            t_uniform.push_back(tt);
+        if (t_uniform.empty() || t_uniform.back() < p.t_end - 1e-14 * dt_out_au)
+            t_uniform.push_back(p.t_end);
+
+        dense_stepper.initialize(rho_vec, p.t0, p.dt);
+
+        // First output at t0
+        observer(rho_vec, p.t0);
+        size_t out_idx = 1;
+
+        state_type x_interp(rho_vec.size());
+
+        while (dense_stepper.current_time() < p.t_end) {
+            dense_stepper.do_step(solver);
+            const double t_new = dense_stepper.current_time();
+            const double t_old = dense_stepper.previous_time();
+
+            // Emit observer at every uniform time that falls in [t_old, t_new]
+            while (out_idx < t_uniform.size() && t_uniform[out_idx] <= t_new) {
+                if (t_uniform[out_idx] > t_old) {
+                    dense_stepper.calc_state(t_uniform[out_idx], x_interp);
+                    observer(x_interp, t_uniform[out_idx]);
+                }
+                ++out_idx;
+            }
+        }
+
+        // Copy final state back for rho_final
+        const state_type& final_state = dense_stepper.current_state();
+        for (size_t i = 0; i < rho_vec.size(); ++i)
+            rho_vec[i] = final_state[i];
     }
 
     // Return final density in site space (N_sites × N_sites)
