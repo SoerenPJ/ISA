@@ -102,18 +102,116 @@ rho_j_space = np.loadtxt(base_dir / 'rho0_j_space.txt')
 rho_j_NxN = rho_j_space[:,0::2] + 1j*rho_j_space[:,1::2]
 #generate the number of sites array
 N_sites = np.arange(rho_j_NxN.shape[1])
+H_TB = np.loadtxt(base_dir / 'HTB.txt')
+H_TB = H_TB[:,0::2] + 1j*H_TB[:,1::2] 
+print("this is the first symmetry test", np.unique(H_TB - (H_TB).T))
 
 
 rho_l_space = np.loadtxt(base_dir / 'rho0_l_space.txt')
 #reshape the rho_l_space to a NxN matrix
 rho_l_NxN = rho_l_space[:,0::2] + 1j*rho_l_space[:,1::2]
 
+
+
+
+
+
+
+
+
+print("number of electrons j", 2*np.real(np.trace(rho_j_NxN)))
+
+
+
+print("number of electrons l", 2*np.real(np.trace(rho_l_NxN)))
+
 dipole_moments = np.loadtxt(base_dir / 'dipole_time_evolution.txt')
 dipole = np.real(dipole_moments[:,1])
 time = np.real(dipole_moments[:,0]*au_fs)
 
 
-print("shape of dipolemoments", dipole_moments.shape)
+# Inversion-partner check (x,y) <-> (-x,y) when lattice positions are available
+pts_path = base_dir / "lattice_points.txt"
+if pts_path.exists():
+    pts = np.loadtxt(pts_path, comments="#")
+    if pts.ndim == 2 and pts.shape[1] >= 2:
+        coords = np.asarray(pts)[:, :2]
+        tol = 1e-8
+        missing = []
+        tol = 1e-6
+        missing = []
+
+        for x,y in coords:
+
+            # self-symmetric points
+            if abs(x) < tol:
+                continue
+
+            match = np.any(
+                np.isclose(coords[:,0], -x, atol=tol) &
+                np.isclose(coords[:,1],  y, atol=tol)
+            )
+
+            if not match:
+                missing.append((x,y))
+
+
+if pts_path.exists():
+    pts = np.loadtxt(pts_path, comments="#")
+    coords = pts[:, :2]
+
+    tol = 1e-6
+    missing = []
+
+    for x, y in coords:
+
+        # check for partner
+        match = np.any(
+            np.isclose(coords[:,0], -x, atol=tol) &
+            np.isclose(coords[:,1],  y, atol=tol)
+        )
+
+        # allow self-partner for x≈0
+        if abs(x) < tol:
+            match = True
+
+        if not match:
+            missing.append((x,y))
+
+    missing = np.array(missing)
+
+    # create inverted lattice
+    inv_coords = coords.copy()
+    inv_coords[:,0] *= -1
+
+    plt.figure(figsize=(7,7))
+
+    # original structure
+    plt.scatter(coords[:,0], coords[:,1],
+                color="black", label="Original")
+
+    # inverted structure
+    plt.scatter(inv_coords[:,0], inv_coords[:,1],
+                color="blue", alpha=0.5, label="Inverted")
+
+    # highlight symmetry violations
+    if len(missing) > 0:
+        plt.scatter(missing[:,0], missing[:,1],
+                    color="red", s=80, label="Missing partner")
+
+    plt.axvline(0, linestyle="--", color="gray")
+
+    plt.gca().set_aspect("equal")
+    plt.title("Inversion symmetry check")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.legend()
+    plt.grid()
+
+    plt.savefig(out_dir / "inversion_symmetry_debug.png", dpi=300)
+    plt.show()
+
+
 
 #exit()
 def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole):#, rho_l_space, dipole_moments):
@@ -121,6 +219,7 @@ def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole):#, rho_l_sp
     # Plot of eigenvalues
     plt.figure(figsize=(8, 6))
     plt.plot(eigenvalues[:,0] *au_eV, 'o')
+    print("Eigenvalues in ev: ",eigenvalues[:,0]* au_eV)
     plt.title('Eigenvalues ')
     plt.xlabel('Index')
     plt.ylabel('Eigenvalue [eV]')
@@ -155,7 +254,6 @@ def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole):#, rho_l_sp
     plt.title("Time evolution of dipole moment")
     plt.savefig(out_dir / "Dipole_time_evolution_plot.png", dpi= 300, bbox_inches="tight")
     plt.show()
-    
     
     plt.close()
 

@@ -133,7 +133,13 @@ struct TimeTonianSolver {
     bool zeeman_use_external = true;  // include B_ext in Zeeman
     bool zeeman_use_induced = true;   // include B_ind (from A_ind) in Zeeman
 
-
+    // Optional spatial symmetry debug (inversion / permutations in site space).
+#ifdef DEBUG_SYMMETRY
+    bool symmetry_map_valid = false;
+    std::vector<int> sym_partner;      // partner[i] implements full inversion r -> -r (about CM)
+    bool xmirror_map_valid = false;
+    std::vector<int> xmirror_partner;  // partner[i] implements x -> -x (about CM x), y fixed
+#endif
 
     void operator()(const std::vector<std::complex<double>> &rho_vec,
                     std::vector<std::complex<double>> &drho_dt_vec,

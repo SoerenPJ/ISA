@@ -28,7 +28,7 @@ Eigen::VectorXd Potential::time_impulse(double t) const {
 
     for (int i = 0; i < p.N; ++i) {
         double x = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
-        result(i) = p.e * p.E0 * osc * x * env;
+        result(i) = p.e * p.E0  * osc * x * env;
     }
     return result;
 }
@@ -108,7 +108,7 @@ Eigen::MatrixXd Potential::build_coulomb_matrix() const {
         for (int j = 0; j < p.N; j++) {
 
             if (i == j) {
-                V(i, j) = p.coulomb_onsite_eV / p.au_eV;  // Hubbard U (a.u.), e.g. 5-10 eV for graphene
+                V(i, j) = vvR(0.0); //p.coulomb_onsite_eV/p.au_eV;//vvR(0.0);
                 continue;
             }
 

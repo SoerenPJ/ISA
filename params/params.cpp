@@ -323,6 +323,7 @@ void Params::load_from_toml(const std::string& filename)
     // ---- simulation ----
     
     dt    = tbl["simulation"]["dt"].value_or(0.2); // do not change, this is the way 
+    max_internal_dt = tbl["simulation"]["max_internal_dt"].value_or(0.1)/au_fs;
     t_end = tbl["simulation"]["t_max"].value_or(500.0) / au_fs;
     t0    = tbl["simulation"]["t0"].value_or(0.0) / au_fs;
     a_tol = tbl["simulation"]["a_tol"].value_or(1e-10);
@@ -451,6 +452,28 @@ void Params::build_lattice()
             }
         }
 
+        // ============================
+        // Optional centering of geometry
+        // ============================
+        // This recenters the 2D coordinates so that the center-of-mass is at (0,0).
+        // It does NOT change relative distances, only the overall origin.
+        // Comment out this block if you want the original un-centered coordinates.
+        {
+            if (!xl_2D.empty()) {
+                double cx = 0.0, cy = 0.0;
+                for (const auto &r : xl_2D) {
+                    cx += r[0];
+                    cy += r[1];
+                }
+                cx /= static_cast<double>(xl_2D.size());
+                cy /= static_cast<double>(xl_2D.size());
+                for (auto &r : xl_2D) {
+                    r[0] -= cx;
+                    r[1] -= cy;
+                }
+            }
+        }
+
         N = static_cast<int>(xl_2D.size());
         two_dim = true;
 
@@ -463,7 +486,7 @@ void Params::build_lattice()
 
 
 
-    // Fallback: always build a 1D chain so we never segfault in potential/coulomb.
+   
     lattice = "ssh";
     xl_1D.reserve(N);
     for (int i = 0; i < N; ++i)

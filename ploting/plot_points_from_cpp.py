@@ -65,16 +65,39 @@ def main() -> int:
     if n_unique != n_raw:
         print(f"WARNING: lattice_points.txt contains duplicates: raw={n_raw}, unique(6dp)={n_unique}")
 
-    x = pts[:, 0]
-    y = pts[:, 1]
+    x = pts[:, 0] *  0.0529177
+    y = pts[:, 1] *  0.0529177
 
-    plt.figure(figsize=(7, 7))
-    plt.scatter(x, y, s=12, c="k")
+    # lattice coordinates
+    xl = pts[:, :2]
+
+    # estimate nearest neighbour distance automatically
+    distances = []
+    for i in range(len(xl)):
+        for j in range(i+1, len(xl)):
+            distances.append(np.linalg.norm(xl[i] - xl[j]))
+
+    a = min(distances)   # nearest neighbour distance
+    cutoff = 1.0005 * a
+
+    # compute bonds
+    bonds = [(i, j) for i in range(len(xl)) for j in range(i+1, len(xl))
+            if np.linalg.norm(xl[i] - xl[j]) <= cutoff]
+
+    plt.figure(figsize=(7,7))
+
+    # draw bonds
+    for i, j in bonds:
+        plt.plot([x[i], x[j]], [y[i], y[j]], "-", linewidth=0.8, color="black")
+
+    # draw atoms
+    plt.scatter(x, y, s=12, c="red")
+
     plt.gca().set_aspect("equal", adjustable="box")
     plt.grid(True, alpha=0.3)
     plt.title(f"C++ lattice points: {base_dir.name} (raw={n_raw}, unique≈{n_unique})")
-    plt.xlabel("x")
-    plt.ylabel("y")
+    plt.xlabel("x [nm]")
+    plt.ylabel("y [nm]")
     plt.show()
     return 0
 

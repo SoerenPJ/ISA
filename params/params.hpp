@@ -41,6 +41,7 @@ struct Params
     // ---- TIME (TOML) ----
     // ======================
     double dt;
+    double max_internal_dt;
     double t_end;
 
     // ======================

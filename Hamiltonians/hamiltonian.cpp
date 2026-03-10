@@ -2,7 +2,7 @@
 #include "../DensityMatrix/Density.hpp"
 #include <cmath>
 
-// Build complex tight-binding Hamiltonian (RowMajor)
+
 MatrixC TB_hamiltonian(int N, double t1, double t2)
 {
     MatrixC H = MatrixC::Zero(N, N);

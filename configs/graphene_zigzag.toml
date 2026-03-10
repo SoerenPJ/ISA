@@ -2,9 +2,9 @@
 lattice = "graphene"
 formation_shape = "triangle" # rectangle | triangle
 formation = "zigzag"
-size_x = 2
-size_y = 2
-rotation_angle_deg = 0
+size_x = 4
+size_y = 4
+rotation_angle_deg = 90
 
 # bond length (nm)
 lattice_const = 0.142
@@ -12,16 +12,16 @@ lattice_const = 0.142
 [hamiltonian]
 t1 = -2.8
 t2 = -2.8
-mu = 0.0
-gamma = 0.01
-spin_on = false
+mu =  2.3
+gamma = 0.05
+spin_on = true
 
 
 [simulation]
 use_strict_solver = false
 dt = 0.01
 t0 = 0.0
-t_max = 1500.0
+t_max = 2000.0
 a_tol = 1e-10
 r_tol = 1e-12
 
@@ -29,25 +29,33 @@ r_tol = 1e-12
 intensity = 1e13
 mode = "time_impulse"       #time_impulse
 phase = 0.0
-omega = 0.5    # reso = 3.48
-t_shift = 500.0
+omega = 1.96
+#size = 2 => 3.89
+#size = 3 => 3.89
+#size = 4 => 3.65
+#size = 5 => 3.449
+#size = 6 => 3.295
+#size = 8 => 3.25
+#size = 10 => 3.10
+
+t_shift = 1000.0
 sigma_gaus = 100 #60.07
 sigma_ddf = 0.01
-B_ext = false
-
+B_ext = true
 
 [analysis]
-omega_cut_off = 20  
-fourier_dt_fs = 0.005 # for pretty 0.001 or 0.0005. HHG
-run_sigma_ext = false   
-run_dipole_acc = true  
+omega_cut_off = 35
+fourier_dt_fs = 0.01 # for pretty 0.001 or 0.005. HHG
+run_sigma_ext = false
+run_dipole_acc = true #true
 
 [thermo]
-T = 300
+T = 300 #0.01
 
 [features]
 coulomb = true
-coulomb_onsite_eV = 10.0 # Hubbard U (eV), 5-10 typical for graphene
-self_consistent_phase = false  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
-zeeman_external = false  
-zeeman_induced = false
+coulomb_onsite_eV = 20.0 # Hubbard U (eV), 
+self_consistent_phase = true  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
+zeeman_external = true  
+zeeman_induced = true
+

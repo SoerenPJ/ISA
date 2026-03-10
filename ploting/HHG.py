@@ -102,9 +102,7 @@ omega_eV = dipole_acc_data[:,0] * au_eV
 dipole_acc = dipole_acc_data[:, 1] + 1j * dipole_acc_data[:, 2]  # shape (N,)
 y_axis = np.abs(dipole_acc)**2
 
-
-
-
+print(dipole_acc_data[:,0].size)
 # Find resonance frequency (maximum intensity)
 index = np.argmax(y_axis)
 omega_0 = omega_eV[index]
@@ -119,16 +117,20 @@ fig, ax = plt.subplots(figsize=(6,4))
 ax.plot(x_val, y_val, linewidth=2)
 
 ax.set_yscale("log")
-ax.set_xlabel(r'$\hbar\omega /\omega_0 $', fontsize=24)
+ax.set_xlabel(r'$\omega /\omega_0 $', fontsize=24)
 ax.set_ylabel(r'$|\ddot{p}(\omega)|^2 / |\ddot{p}(\omega_0)|^2$', fontsize=24)
 
 ax.tick_params(labelsize=12)
-ax.set_xlim(0, 30)
+from matplotlib.ticker import FixedLocator
 
-ax.minorticks_on()
+ax.set_xlim(0, 11)
+
+# Force fixed odd ticks
+ax.xaxis.set_major_locator(FixedLocator(np.arange(0, 11, 1)))
+
+# Turn off minors completely
+ax.xaxis.set_minor_locator(FixedLocator([]))
 ax.grid(which='major', linestyle='-', linewidth=0.8)
-ax.grid(which='minor', linestyle=':', linewidth=0.5)
-ax.tick_params(axis='x', which='minor', bottom=True)
 
 
 plt.tight_layout()

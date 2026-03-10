@@ -83,6 +83,7 @@ void compute_sigma_ext(
 
         VectorXcd integrand = dipole_t.cast<std::complex<double>>().array() * expo.array();
         std::complex<double> P_w = trapezoid(t, integrand);
+        
         const double prefactor = (spin_on ? 1.0 : 2.0);
         std::complex<double> alpha_w =  P_w / (  prefactor * sigma_ddf * E0);
 

@@ -35,7 +35,7 @@
             return {};
         return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
-
+    
     // Stable 64-bit FNV-1a hash (good enough for folder naming)
     static std::uint64_t fnv1a_64(std::string_view s)
     {
@@ -117,6 +117,8 @@
         Potential pot(p);
         p.V_ee = pot.build_coulomb_matrix();
 
+
+
         // Save V_ee (Coulomb / VLL) matrix for plotting
         {
             ofstream fout(out_dir / "V_ee.txt");
@@ -189,6 +191,7 @@
         if (p.spin_on && p.B_ext && p.zeeman_external) {
             add_Zeeman_diagonal(Hc, pot.compute_Bz(), p.N, true, 0.5);
         }
+
 
         // Save Hamiltonian 
         {
@@ -293,7 +296,7 @@
        
 
         // ===========================
-        // Save dipole evolution (use diagonal-only path to avoid NxN matrix per step)
+        // Save dipole evolution (use diagonal-only)
         // ===========================
         VectorXd time_vec(history.time.size());
         VectorXd dipole_t(history.time.size());
@@ -319,7 +322,7 @@
         {
             ofstream fout(out_dir / "current_time_evolution.txt");
             fout << "# t  Jx  Jy\n";
-
+        
             for (size_t k = 0; k < history.time.size(); ++k) {
                 fout << history.time[k] << " "
                     << history.J_x[k] << " "
@@ -327,6 +330,23 @@
             }
         }
 
+        // Save site-resolved density diagonal as a function of time
+        {
+            ofstream fout(out_dir / "rho_diag_time_evolution.txt");
+            fout << "# t";
+            for (int i = 0; i < p.N; ++i)
+                fout << " rho_" << i;
+            fout << "\n";
+
+            for (size_t k = 0; k < history.time.size(); ++k) {
+                fout << history.time[k];
+                const auto &diag_k = history.diag[k];
+                for (int i = 0; i < p.N; ++i)
+                    fout << " " << diag_k[i];
+                fout << "\n";
+            }
+        }
+        
         // Induced vector potential A_ind_x, A_ind_y per site (when self_consistent_phase was on)
         if (!history.A_ind_x.empty() && history.A_ind_x.size() == history.time.size()) {
             ofstream fout(out_dir / "A_ind_time_evolution.txt");

@@ -28,6 +28,8 @@ namespace {
 
 constexpr double AU_TIME_TO_FS = 2.418884326505e-17 * 1e15;
 
+
+
 // Site occupations from density matrix (sum over spin if spin_on).
 Eigen::VectorXd rho_diag_from_rho(const MatrixC& rho, int N_sites, bool spin_on) {
     Eigen::VectorXd rho_diag(N_sites);
@@ -341,7 +343,20 @@ void RhoObserver::operator()(
     for (int i = 0; i < N_mat; ++i)
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
-    // Do not store rho_full: main only uses diag, J_x, J_y (saves large memory with strict solver).
+
+    // Store spin-summed density matrix in site space at this time.
+    MatrixC rho_site(N_sites, N_sites);
+    for (int i = 0; i < N_sites; ++i)
+        for (int j = 0; j < N_sites; ++j) {
+            std::complex<double> val = rho_k(i, j);
+            if (spin) {
+                const int ii = i + N_sites;
+                const int jj = j + N_sites;
+                val += rho_k(ii, jj);
+            }
+            rho_site(i, j) = val;
+        }
+    hist.rho_full.push_back(std::move(rho_site));
 
     // H(t, rho) same as RHS so stored J and A_ind match dynamics
     MatrixC H_t(N_mat, N_mat);
@@ -482,6 +497,8 @@ void TimeTonianSolver::operator()(
 
     build_H_for_time(this, rho_tmp, t, H_tmp);
 
+
+
     if (self_consistent_on && H_tmp.rows() > 0)
         H_prev = H_tmp;
 
@@ -542,6 +559,8 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
             solver.y_pos(i) = 0.0;
         }
     }
+
+
 
     //calc the dipole operator
     solver.P_x = MatrixC::Zero(N_mat, N_mat);
@@ -672,29 +691,25 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
         );
         dense_stepper_type dense_stepper(controlled_stepper);
 
-        // Uniform output times [t0, t0+dt_out, ...] for Fourier/dipole analysis (match bachelor ref).
-        const double dt_out_au = p.fourier_dt_fs / p.au_fs;
-        std::vector<double> t_uniform;
-        for (double tt = p.t0; tt <= p.t_end; tt += dt_out_au)
-            t_uniform.push_back(tt);
-        if (t_uniform.empty() || t_uniform.back() < p.t_end - 1e-14 * dt_out_au)
-            t_uniform.push_back(p.t_end);
+        
 
-        dense_stepper.initialize(rho_vec, p.t0, p.dt);
+       dense_stepper.initialize(rho_vec, p.t0, p.dt);
 
-        // First output at t0
+        // First output
         observer(rho_vec, p.t0);
-        size_t out_idx = 1;
+        out_idx = 1;   // reuse existing variable
 
         state_type x_interp(rho_vec.size());
 
         while (dense_stepper.current_time() < p.t_end) {
             dense_stepper.do_step(solver);
+
             const double t_new = dense_stepper.current_time();
             const double t_old = dense_stepper.previous_time();
 
-            // Emit observer at every uniform time that falls in [t_old, t_new]
-            while (out_idx < t_uniform.size() && t_uniform[out_idx] <= t_new) {
+            while (out_idx < t_uniform.size() &&
+                t_uniform[out_idx] <= t_new) {
+
                 if (t_uniform[out_idx] > t_old) {
                     dense_stepper.calc_state(t_uniform[out_idx], x_interp);
                     observer(x_interp, t_uniform[out_idx]);
@@ -723,6 +738,8 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
             }
             rho_final(i,j) = val;
         }
+
+
 
     return rho_final;
 }
