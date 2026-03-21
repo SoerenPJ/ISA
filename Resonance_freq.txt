@@ -1,0 +1,10 @@
+zz, size 5, rot = 0, q = 8, self_consistent_phase = false => 2.10
+zz, size 5, rot = 0, q = 8, self_consistent_phase = true => 2.10
+zz, size 5, rot = 90, q = 8, self_consistent_phase = false => 2.10
+zz, size 5, no B_ext, else -==- all => 2.10
+
+AC, size = 6, rot = 0 q = 4, => 1.69
+AC, size = 6, rot = 90, q = 4, => 1.69
+
+AC, size = 6, rot = 90, q = 4, B_ext = true and self_consistent_phase => 1.69
+AC, size = 6, rot = 0, q = 4, B_ext = true and self_consistent_phase => 1.69

@@ -27,7 +27,6 @@ struct TimeTonianSolver;   // <<< ADD THIS
 struct RhoHistory {
     std::vector<double> time;
     std::vector<std::vector<double>> diag;   // diag[t][i] = rho_ii(t)
-    std::vector<MatrixC> rho_full;
     std::vector<double> J_x;
     std::vector<double> J_y;
     // Induced vector potential per site when self_consistent_phase is on: A_ind_[xy][t][i]
@@ -153,7 +152,12 @@ struct TimeTonianSolver {
 std::pair<Eigen::VectorXcd, Eigen::MatrixXcd> compute_eigenpairs(const Eigen::MatrixXcd& H);
 
 MatrixC Rho_0(const Eigen::VectorXcd &epsilon, double mu, double T);
-
+// Build equilibrium density matrix from a target electron count
+// rather than from a chemical potential.
+MatrixC Rho_0_charge(const Eigen::VectorXcd &epsilon,
+                     int N_sites,
+                     double Q_doping,
+                     bool spin_on);
 MatrixC rho_l_space(const Eigen::MatrixXcd &A_jl, const MatrixC &rho_j);
 
 // Evolve density matrix over time (records diagonals into history)

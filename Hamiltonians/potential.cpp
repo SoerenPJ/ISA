@@ -59,10 +59,13 @@ Eigen::VectorXd Potential::ddf(double t) const {
     if (t < cutoff)
         val = p.E0 * std::cos(p.au_omega_ddf * t + p.field_phase);
 
+    const double spin_factor = p.spin_on ? 1.0 : 2.0;
+
     for (int i = 0; i < p.N; ++i) {
         double x = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
-        result(i) = val * x;
+        result(i) = spin_factor * p.e * val * x;
     }
+
     return result;
 }
 
@@ -138,7 +141,7 @@ double Potential::compute_Bz() const
     //   Bz = E0 / (e / (2 m_e)) = 2 m_e E0 / e  →  2 * E0.
     const double e_au    = static_cast<double>(p.e);      // = 1
     const double m_e_au  = 1.0;                           // electron mass in a.u.
-    return (p.E0) / (e_au/(2*m_e_au));                  // effectively 2 * E0
+    return (p.E0) / 137; //(e_au/(2*m_e_au));                  // effectively 2 * E0
 }
 
 double Potential::calculate_phi(double xa, double xb,

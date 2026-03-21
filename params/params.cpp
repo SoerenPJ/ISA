@@ -297,7 +297,7 @@ void Params::load_from_toml(const std::string& filename)
 
     // ---- system ----
     N = tbl["system"]["N"].value_or(50);
-    a = tbl["system"]["lattice_const"].value_or(0.142) / au_nm;
+    a = tbl["system"]["lattice_const"].value_or(0.1421) / au_nm;
     
     // default to SSH/1D if not provided
     lattice = lower_ascii(tbl["system"]["lattice"].value_or(std::string("ssh")));
@@ -349,7 +349,9 @@ void Params::load_from_toml(const std::string& filename)
     run_dipole_acc = tbl["analysis"]["run_dipole_acc"].value_or(false);
 
     // ---- thermo ----
-    T = tbl["thermo"]["T"].value_or(300);
+    T = tbl["thermo"]["T"].value_or(0.001);
+    use_charge_doping = tbl["thermo"]["use_charge_doping"].value_or(false);
+    Q_doping          = tbl["thermo"]["Q_doping"].value_or(0.0);
 
     // ---- features ----
     coulomb_on = tbl["features"]["coulomb"].value_or(true);
@@ -407,30 +409,7 @@ void Params::build_lattice()
         return;
     }
 
-    // --------------- PENTALENE PRESET (remove this whole block if not needed) ---------------
-    if (lattice == "pentalene") {
-        // 13 sites, same geometry/order as TiBOX graphene_molecule ncells=4.5 (a.u.)
-        const double pentalene_x[13] = {
-            2.68530084, 4.02795125, 5.37060167, 6.71325209, 8.05590251,
-            2.68530084, 4.02795125, 5.37060167, 6.71325209, 8.05590251,
-            4.02795125, 5.37060167, 6.71325209
-        };
-        const double pentalene_y[13] = {
-            1.55035916, 0.77517958, 1.55035916, 0.77517958, 1.55035916,
-            3.10071832, 3.87589790, 3.10071832, 3.87589790, 3.10071832,
-            5.42625706, 6.20143664, 5.42625706
-        };
-        xl_2D.reserve(13);
-        for (int i = 0; i < 13; ++i)
-            xl_2D.push_back({ pentalene_x[i], pentalene_y[i] });
-        N = 13;
-        two_dim = true;
-        a = 1.65;  // bond length (a.u.): nn distances ~1.34–1.55; cutoff must exceed 1.55 so bonds are created
-        xl_1D.reserve(13);
-        for (const auto& r : xl_2D)
-            xl_1D.push_back(r[0]);
-        return;
-    }
+    
     // ----------------------------------------------------------------------------------------
 
     if (lattice == "graphene") {

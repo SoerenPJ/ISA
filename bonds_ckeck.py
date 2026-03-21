@@ -119,7 +119,7 @@ def compute_bond_diagnostics(
                 degrees[j] += 1
 
     print(f"Number of sites (used): {n_sites}")
-    print(f"Number of bonds (|H_ij| > {hop_tol:g}): {len(bond_distances)}")
+    print(f"Number of bonds (|H_ij| > {hop_tol:g}): {len(bond_distances)*0.05291772083}")
 
     # Degree statistics
     if degrees:
@@ -147,10 +147,10 @@ def compute_bond_diagnostics(
         )
 
     print("\nBond length statistics (from non-zero hoppings):")
-    print(f"  min    = {min_r:.6f}")
-    print(f"  max    = {max_r:.6f}")
-    print(f"  mean   = {mean_r:.6f}")
-    print(f"  median = {median_r:.6f}")
+    print(f"  min    = {min_r* 0.05291772083:.9f}")
+    print(f"  max    = {max_r* 0.05291772083:.9f}")
+    print(f"  mean   = {mean_r* 0.05291772083:.9f}")
+    print(f"  median = {median_r*0.05291772083:.9f}")
 
     # Define a "nearest neighbour" geometric cutoff from the median bond length.
     # Geometric tolerance is slightly larger than the TB construction tolerance

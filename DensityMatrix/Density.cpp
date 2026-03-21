@@ -344,20 +344,6 @@ void RhoObserver::operator()(
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
 
-    // Store spin-summed density matrix in site space at this time.
-    MatrixC rho_site(N_sites, N_sites);
-    for (int i = 0; i < N_sites; ++i)
-        for (int j = 0; j < N_sites; ++j) {
-            std::complex<double> val = rho_k(i, j);
-            if (spin) {
-                const int ii = i + N_sites;
-                const int jj = j + N_sites;
-                val += rho_k(ii, jj);
-            }
-            rho_site(i, j) = val;
-        }
-    hist.rho_full.push_back(std::move(rho_site));
-
     // H(t, rho) same as RHS so stored J and A_ind match dynamics
     MatrixC H_t(N_mat, N_mat);
     build_H_for_time(solver, rho_k, t, H_t);
@@ -392,9 +378,7 @@ void RhoObserver::operator()(
 
 
 // -------------------------------------------------------------
-// 1. Eigenpairs (single solver — eigenvalues and eigenvectors paired)
-// For real symmetric H (SSH, graphene from points) use SelfAdjointEigenSolver
-// so eigenvectors are real and orthonormal; avoids phase ambiguity from ComplexEigenSolver.
+// 1. Eigenpairs 
 // -------------------------------------------------------------
 std::pair<Eigen::VectorXcd, Eigen::MatrixXcd> compute_eigenpairs(const Eigen::MatrixXcd& H) {
     const int N = H.rows();
@@ -448,7 +432,7 @@ std::pair<Eigen::VectorXcd, Eigen::MatrixXcd> compute_eigenpairs(const Eigen::Ma
 }
 
 // -------------------------------------------------------------
-// 3. Rho_0 — now RETURNS MatrixC (row-major)
+// 3. Rho_0 
 // -------------------------------------------------------------
 MatrixC Rho_0(const Eigen::VectorXcd& epsilon, double mu, double T) {
     const double kb = 8.617e-5 / 27.2113834;
@@ -465,9 +449,82 @@ MatrixC Rho_0(const Eigen::VectorXcd& epsilon, double mu, double T) {
 
     return Rho;
 }
+// Build Rho_0 from a target electron count N_e = N_e0 + Q_doping.
+MatrixC Rho_0_charge(const Eigen::VectorXcd& epsilon,
+                     int N_sites,
+                     double Q,
+                     bool spin_on)
+{
+    const int N = epsilon.size();          // number of single-particle states
+    struct Level { double E; int idx; };
+    std::vector<Level> levels;
+    levels.reserve(N);
+    for (int i = 0; i < N; ++i)
+        levels.push_back({ epsilon(i).real(), i });
+
+    std::sort(levels.begin(), levels.end(),
+              [](const Level &a, const Level &b) { return a.E < b.E; });
+
+    // Neutral reference electrons and level capacities:
+    // - spinful (explicit spin, H is 2*N_sites x 2*N_sites):
+    //     half-filling corresponds to N_sites electrons
+    //     and each eigenstate is a single spin-orbital with capacity 1.
+    // - spinless (implicit spin degeneracy):
+    //     half-filling corresponds to N_sites electrons
+    //     and each eigenstate can host up to 2 electrons (two spins).
+    double neutral_electrons;
+    double capacity;
+    if (spin_on) {
+        // explicit spin: one electron per site at half filling
+        neutral_electrons = static_cast<double>(N_sites);
+        capacity          = 1.0;
+    } else {
+        neutral_electrons = static_cast<double>(N_sites);
+        capacity          = 2.0;
+    }
+
+    const double target_electrons  = neutral_electrons + Q;
+
+    MatrixC Rho = MatrixC::Zero(N, N);
+    double remaining = target_electrons;
+
+    // Fill block-by-block, treating (near-)degenerate levels symmetrically.
+    const double deg_tol = 1e-8;  // energy tolerance (in a.u.) to consider levels degenerate
+    int i = 0;
+    while (i < N && remaining > 0.0) {
+        // Build a block of levels that are degenerate within deg_tol
+        int j = i + 1;
+        while (j < N && std::abs(levels[j].E - levels[i].E) < deg_tol)
+            ++j;
+
+        const int g = j - i;                         // block size (degeneracy)
+        const double block_capacity = g * capacity;  // total electrons this block can host
+
+        if (remaining >= block_capacity) {
+            // Fully fill this degenerate block
+            for (int k = i; k < j; ++k) {
+                const double f = 1.0;  // fully occupied in terms of capacity
+                Rho(levels[k].idx, levels[k].idx) = std::complex<double>(f, 0.0);
+            }
+            remaining -= block_capacity;
+        } else {
+            // Partially fill: distribute electrons evenly across the block
+            const double f_block = remaining / block_capacity;  // 0..1 occupation fraction
+            for (int k = i; k < j; ++k) {
+                Rho(levels[k].idx, levels[k].idx) = std::complex<double>(f_block, 0.0);
+            }
+            remaining = 0.0;
+            break;
+        }
+
+        i = j;
+    }
+
+    return Rho;
+}
 
 // -------------------------------------------------------------
-// 4. Transform density to l-space — now MatrixC everywhere
+// 4. Transform density to l-space 
 // -------------------------------------------------------------
 MatrixC rho_l_space(const Eigen::MatrixXcd& U,
                     const MatrixC& rho_eig)
@@ -478,7 +535,7 @@ MatrixC rho_l_space(const Eigen::MatrixXcd& U,
 
 
 // -------------------------------------------------------------
-// 5. RHS of dρ/dt — all matrices are MatrixC
+// 5. RHS of dρ/dt 
 // -------------------------------------------------------------
 
 void TimeTonianSolver::operator()(
@@ -515,7 +572,7 @@ void TimeTonianSolver::operator()(
 
 
 // -------------------------------------------------------------
-// 6. Time evolution — now using MatrixC everywhere
+// 6. Time evolution 
 // -------------------------------------------------------------
 MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, Potential &pot, 
     const std::string &mode, 
@@ -680,48 +737,68 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
             observer);
     }
     else {
-        // -------- ADAPTIVE + DENSE OUTPUT: output on uniform grid (like Python t_eval) --------
-        // Stepper: adaptive steps internally, but we record state at uniform times via interpolation.
-        typedef runge_kutta_dopri5<state_type> error_stepper_type;
-        typedef controlled_runge_kutta<error_stepper_type> controlled_stepper_type;
-        typedef boost::numeric::odeint::dense_output_runge_kutta<controlled_stepper_type> dense_stepper_type;
+        // TEMP: toggle to test non-dense adaptive solver vs dense output
+        const bool use_dense_output = false;
 
-        controlled_stepper_type controlled_stepper(
-            default_error_checker<double, range_algebra, default_operations>(p.a_tol, p.r_tol, 1, 1)
-        );
-        dense_stepper_type dense_stepper(controlled_stepper);
+        if (use_dense_output) {
+            // -------- ADAPTIVE + DENSE OUTPUT: output on uniform grid (like Python t_eval) --------
+            // Stepper: adaptive steps internally, but we record state at uniform times via interpolation.
+            typedef runge_kutta_dopri5<state_type> error_stepper_type;
+            typedef controlled_runge_kutta<error_stepper_type> controlled_stepper_type;
+            typedef boost::numeric::odeint::dense_output_runge_kutta<controlled_stepper_type> dense_stepper_type;
 
-        
+            controlled_stepper_type controlled_stepper(
+                default_error_checker<double, range_algebra, default_operations>(p.a_tol, p.r_tol, 1, 1)
+            );
+            dense_stepper_type dense_stepper(controlled_stepper);
 
-       dense_stepper.initialize(rho_vec, p.t0, p.dt);
+            dense_stepper.initialize(rho_vec, p.t0, p.dt);
 
-        // First output
-        observer(rho_vec, p.t0);
-        out_idx = 1;   // reuse existing variable
+            // First output
+            observer(rho_vec, p.t0);
+            out_idx = 1;   // reuse existing variable
 
-        state_type x_interp(rho_vec.size());
+            state_type x_interp(rho_vec.size());
 
-        while (dense_stepper.current_time() < p.t_end) {
-            dense_stepper.do_step(solver);
+            while (dense_stepper.current_time() < p.t_end) {
+                dense_stepper.do_step(solver);
 
-            const double t_new = dense_stepper.current_time();
-            const double t_old = dense_stepper.previous_time();
+                const double t_new = dense_stepper.current_time();
+                const double t_old = dense_stepper.previous_time();
 
-            while (out_idx < t_uniform.size() &&
-                t_uniform[out_idx] <= t_new) {
+                while (out_idx < t_uniform.size() &&
+                       t_uniform[out_idx] <= t_new) {
 
-                if (t_uniform[out_idx] > t_old) {
-                    dense_stepper.calc_state(t_uniform[out_idx], x_interp);
-                    observer(x_interp, t_uniform[out_idx]);
+                    if (t_uniform[out_idx] > t_old) {
+                        dense_stepper.calc_state(t_uniform[out_idx], x_interp);
+                        observer(x_interp, t_uniform[out_idx]);
+                    }
+                    ++out_idx;
                 }
-                ++out_idx;
             }
-        }
 
-        // Copy final state back for rho_final
-        const state_type& final_state = dense_stepper.current_state();
-        for (size_t i = 0; i < rho_vec.size(); ++i)
-            rho_vec[i] = final_state[i];
+            // Copy final state back for rho_final
+            const state_type& final_state = dense_stepper.current_state();
+            for (size_t i = 0; i < rho_vec.size(); ++i)
+                rho_vec[i] = final_state[i];
+        } else {
+            // Simple adaptive solver without dense output; observer called at each internal step.
+            typedef runge_kutta_dopri5<state_type> error_stepper_type;
+            typedef controlled_runge_kutta<error_stepper_type> controlled_stepper_type;
+
+            controlled_stepper_type controlled_stepper(
+                default_error_checker<double, range_algebra, default_operations>(p.a_tol, p.r_tol, 1, 1)
+            );
+
+            integrate_adaptive(
+                controlled_stepper,
+                solver,
+                rho_vec,
+                p.t0,
+                p.t_end,
+                p.dt,
+                observer);
+        }
     }
 
     // Return final density in site space (N_sites × N_sites)
@@ -748,61 +825,12 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
 // Post-process rho(t) history to compute current Jx, Jy; write .txt
 // -------------------------------------------------------------
 void compute_current_from_history(
-    const Params &p,
-    const MatrixC &Hc,
-    Potential &pot,
-    const RhoHistory &history,
-    const std::string &mode,
-    const std::string &out_dir)
+    const Params &,
+    const MatrixC &,
+    Potential &,
+    const RhoHistory &,
+    const std::string &,
+    const std::string &)
 {
-    const int N_sites = p.N;
-    const int N_mat  = Hc.rows();
-    if (history.rho_full.empty() || history.time.size() != history.rho_full.size()) {
-        std::cerr << "compute_current_from_history: empty or mismatched history, skipping.\n";
-        return;
-    }
-
-    const double e_over_hbar = static_cast<double>(p.e) / static_cast<double>(p.au_hbar);
-    Eigen::VectorXd rho0_diag = rho_diag_from_rho(history.rho_full[0], N_sites, p.spin_on);
-
-    MatrixC P_x = MatrixC::Zero(N_mat, N_mat);
-    MatrixC P_y = MatrixC::Zero(N_mat, N_mat);
-    for (int i = 0; i < N_sites; ++i) {
-        double xi = p.two_dim ? p.xl_2D[i][0] : p.xl_1D[i];
-        double yi = p.two_dim ? p.xl_2D[i][1] : 0.0;
-        std::complex<double> vx(static_cast<double>(p.e) * xi, 0.0);
-        std::complex<double> vy(static_cast<double>(p.e) * yi, 0.0);
-        P_x(i, i) = vx;
-        P_y(i, i) = vy;
-        if (p.spin_on) {
-            P_x(i + N_sites, i + N_sites) = vx;
-            P_y(i + N_sites, i + N_sites) = vy;
-        }
-    }
-
-    std::ofstream fout(out_dir + "/current_time_evolution.txt");
-    if (!fout) {
-        std::cerr << "compute_current_from_history: could not open current_time_evolution.txt\n";
-        return;
-    }
-    fout << "# t  Jx  Jy\n";
-
-    MatrixC H_t(N_mat, N_mat);
-    MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
-    const double hartree_factor = p.spin_on ? 1.0 : 2.0;
-
-    for (size_t k = 0; k < history.time.size(); ++k) {
-        const double t = history.time[k];
-        const MatrixC &rho_k = history.rho_full[k];
-
-        H_t = Hc;
-        add_Vext_to_H(H_t, pot.get_potential(t, mode), p.spin_on, N_sites);
-        if (p.coulomb_on) {
-            Eigen::VectorXd rho_diag = rho_diag_from_rho(rho_k, N_sites, p.spin_on);
-            add_Hartree_to_H(H_t, rho_diag, rho0_diag, p.V_ee, p.e, hartree_factor, p.spin_on, N_sites);
-        }
-
-        compute_current_operators(H_t, P_x, P_y, e_over_hbar, J_x, J_y);
-        fout << t << " " << std::real((rho_k * J_x).trace()) << " " << std::real((rho_k * J_y).trace()) << "\n";
-    }
+    std::cerr << "compute_current_from_history is disabled: full rho(t) history is no longer stored.\n";
 }

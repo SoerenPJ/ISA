@@ -13,15 +13,15 @@ spin_on = false
 
 [simulation]
 dt = 0.01
-t_max = 3000
+t_max = 300
 t0 = 0.0
 a_tol = 1e-10
 r_tol = 1e-12
 use_strict_solver = false
 
 [field]
-intensity = 1e13
-mode = "time_impulse" #time_impulse
+intensity = 1e15
+mode = "ddf"       #time_impulse
 omega = 0.2
 t_shift = 1500
 sigma_gaus = 60.07
@@ -37,10 +37,12 @@ zeeman_external = false
 zeeman_induced = false
 
 [analysis]
-omega_cut_off = 35
-fourier_dt_fs = 0.005 # for pretty 0.001 or 0.005. HHG
-run_sigma_ext = false
-run_dipole_acc = true
+omega_cut_off = 2
+fourier_dt_fs = 0.005  # for pretty 0.001 or 0.005. HHG
+run_sigma_ext = true
+run_dipole_acc = false #true
 
 [thermo]
 T = 300
+use_charge_doping = false # if true, ignore mu for Rho_0
+Q_doping = 0.0            # total extra electrons relative to neutral

@@ -77,6 +77,8 @@ struct Params
     // ---- THERMO (TOML) ----
     // ======================
     int T;
+    bool   use_charge_doping = false;
+    double Q_doping          = 0.0;   // extra electrons (can be non‑integer)
 
     // ======================
     // ---- FEATURES (TOML) ----

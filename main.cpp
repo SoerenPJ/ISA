@@ -66,6 +66,15 @@
         p.load_from_toml(config_path);
         p.finalize();
 
+#ifdef USE_EXTERNAL_INPUTS
+        if (p.use_external_inputs && !p.external_positions_file.empty()) {
+            if (!load_external_positions(p.external_positions_file, p)) {
+                std::cerr << "Error: failed to load external positions. Aborting.\n";
+                return 1;
+            }
+        }
+#endif
+
         // ===========================
         // Field mode (from TOML)
         // ===========================
@@ -115,7 +124,22 @@
         // Build potential and Coulomb
         // ===========================
         Potential pot(p);
+
+#ifdef USE_EXTERNAL_INPUTS
+        if (p.use_external_inputs && !p.external_coulomb_file.empty()) {
+            int N_coulomb = p.N;
+            if (load_external_coulomb(p.external_coulomb_file, N_coulomb, p.V_ee)) {
+                p.N = N_coulomb;
+            } else {
+                std::cerr << "Warning: failed to load external Coulomb matrix, falling back to internal builder.\n";
+                p.V_ee = pot.build_coulomb_matrix();
+            }
+        } else {
+            p.V_ee = pot.build_coulomb_matrix();
+        }
+#else
         p.V_ee = pot.build_coulomb_matrix();
+#endif
 
 
 
@@ -150,33 +174,50 @@
         }
 
         // ===========================
-        // Build Hamiltonian (initial: no induced phase; external phase only if B_ext)
+        // Build base tight-binding Hamiltonian (no Zeeman yet).
+        // External magnetic field enters here only via Peierls phases;
+        // Zeeman coupling is added later in the time-dependent builder so
+        // it is not double-counted.
         // ===========================
         MatrixC Hc;
-        if (p.lattice == "graphene" || p.lattice == "pentalene") {
-            // Graphene / Pentalene: build from points (remove "|| p.lattice == \"pentalene\"" if pentalene preset removed).
-            Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1, 0.001);
-            if (p.lattice == "pentalene") {
-                int n_bonds = 0;
-                for (int i = 0; i < Hc.rows(); ++i)
-                    for (int j = i + 1; j < Hc.cols(); ++j)
-                        if (std::abs(Hc(i, j)) > 1e-12) n_bonds++;
-                cout << "Pentalene: a=" << p.a << " a.u., bonds=" << n_bonds << " (expect 15)\n";
-                if (n_bonds == 0)
-                    cerr << "WARNING: Pentalene has 0 bonds; dipole will be zero. Check bond length a.\n";
-            }
-        } else if (p.lattice == "ssh" || p.lattice == "chain") {
-            // SSH: same freedom as graphene — with or without external phase on bonds.
-            if (p.B_ext) {
-                auto bonds = pot.get_bonds();
-                auto phi_ext = pot.build_ssh_external_phases(pot.compute_Bz());
-                if (phi_ext.size() == bonds.size())
-                    Hc = TB_hamiltonian_SSH_with_phases(p.N, p.t1, p.t2, bonds, phi_ext);
-                else
-                    Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+
+#ifdef USE_EXTERNAL_INPUTS
+        bool used_external_H = false;
+        if (p.use_external_inputs && !p.external_hamiltonian_file.empty()) {
+            int N_H = p.N;
+            if (load_external_hamiltonian(p.external_hamiltonian_file, N_H, Hc)) {
+                used_external_H = true;
+                p.N = N_H;
             } else {
-                Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+                std::cerr << "Warning: failed to load external Hamiltonian, falling back to internal builder.\n";
             }
+        }
+        if (!used_external_H) {
+#endif
+            if (p.lattice == "graphene" || p.lattice == "pentalene") {
+                // Graphene / Pentalene: build from points (remove "|| p.lattice == \"pentalene\"" if pentalene preset removed).
+                Hc = TB_hamiltonian_from_points(p.xl_2D, p.a, p.t1, 1e-5);
+                if (p.lattice == "pentalene") {
+                    int n_bonds = 0;
+                    for (int i = 0; i < Hc.rows(); ++i)
+                        for (int j = i + 1; j < Hc.cols(); ++j)
+                            if (std::abs(Hc(i, j)) > 1e-12) n_bonds++;
+                    cout << "Pentalene: a=" << p.a << " a.u., bonds=" << n_bonds << " (expect 15)\n";
+                    if (n_bonds == 0)
+                        cerr << "WARNING: Pentalene has 0 bonds; dipole will be zero. Check bond length a.\n";
+                }
+            } else if (p.lattice == "ssh" || p.lattice == "chain") {
+                // SSH: same freedom as graphene — with or without external phase on bonds.
+                if (p.B_ext) {
+                    auto bonds = pot.get_bonds();
+                    auto phi_ext = pot.build_ssh_external_phases(pot.compute_Bz());
+                    if (phi_ext.size() == bonds.size())
+                        Hc = TB_hamiltonian_SSH_with_phases(p.N, p.t1, p.t2, bonds, phi_ext);
+                    else
+                        Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+                } else {
+                    Hc = TB_hamiltonian(p.N, p.t1, p.t2);
+                }
         } else {
             Hc = TB_hamiltonian(p.N, p.t1, p.t2);
         }
@@ -184,21 +225,28 @@
         if (p.spin_on) {
             Hc = spin_tonian(Hc);
             if (p.B_ext) {
+                // Apply external Peierls phases only to the spinful hopping;
+                // Zeeman from B_ext will be added consistently during time
+                // evolution via build_H_for_time.
                 pot.apply_peierls_to_spinful_hamiltonian(Hc);
             }
         }
 
+        // Copy for eigenproblem / diagnostics: include Zeeman here so that
+        // eigenvalues, eigenvectors and saved HTB reflect the full static
+        // Hamiltonian with external B, while the base Hc (without Zeeman)
+        // is passed into the time-evolution where Zeeman is added once.
+        MatrixC Hc_eig = Hc;
         if (p.spin_on && p.B_ext && p.zeeman_external) {
-            add_Zeeman_diagonal(Hc, pot.compute_Bz(), p.N, true, 0.5);
+            add_Zeeman_diagonal(Hc_eig, pot.compute_Bz(), p.N, true, 0.5);
         }
 
-
-        // Save Hamiltonian 
+        // Save Hamiltonian (including Zeeman, if present) for plotting
         {
             ofstream fout(out_dir / "HTB.txt");
-            for (int i = 0; i < Hc.rows(); ++i) {
-                for (int j = 0; j < Hc.cols(); ++j)
-                    fout << Hc(i, j).real() << " " << Hc(i, j).imag() << " ";
+            for (int i = 0; i < Hc_eig.rows(); ++i) {
+                for (int j = 0; j < Hc_eig.cols(); ++j)
+                    fout << Hc_eig(i, j).real() << " " << Hc_eig(i, j).imag() << " ";
                 fout << "\n";
             }
         }
@@ -215,9 +263,9 @@
         cout << "\nxl_1D size = " << p.xl_1D.size() << endl;
 
         // ===========================
-        // Eigenproblem 
+        // Eigenproblem  (use Hamiltonian including Zeeman, if any)
         // ===========================
-        auto [eigenvalues, eigenvectors] = compute_eigenpairs(Hc);
+        auto [eigenvalues, eigenvectors] = compute_eigenpairs(Hc_eig);
 
 
         // save eigenvalues
@@ -231,7 +279,12 @@
         // ===========================
         // Initial density matrix
         // ===========================
-        MatrixC rho0 = Rho_0(eigenvalues, p.mu, p.T);
+        MatrixC rho0;
+        if (p.use_charge_doping) {
+            rho0 = Rho_0_charge(eigenvalues, p.N, p.Q_doping, p.spin_on);
+        } else {
+            rho0 = Rho_0(eigenvalues, p.mu, p.T);
+        }
 
         // save rho0 in j-space
         {

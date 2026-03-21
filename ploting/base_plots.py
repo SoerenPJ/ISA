@@ -111,6 +111,10 @@ rho_l_space = np.loadtxt(base_dir / 'rho0_l_space.txt')
 #reshape the rho_l_space to a NxN matrix
 rho_l_NxN = rho_l_space[:,0::2] + 1j*rho_l_space[:,1::2]
 
+# True eigenbasis occupations f_j come directly from rho0_j_space,
+# which is saved in the eigenbasis used in the simulation.
+occ_eig = np.real(np.diag(rho_j_NxN))
+
 
 
 
@@ -214,16 +218,51 @@ if pts_path.exists():
 
 
 #exit()
-def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole):#, rho_l_space, dipole_moments):
+def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole, occ_eig):#, rho_l_space, dipole_moments):
     
-    # Plot of eigenvalues
-    plt.figure(figsize=(8, 6))
-    plt.plot(eigenvalues[:,0] *au_eV, 'o')
-    print("Eigenvalues in ev: ",eigenvalues[:,0]* au_eV)
-    plt.title('Eigenvalues ')
-    plt.xlabel('Index')
-    plt.ylabel('Eigenvalue [eV]')
-    plt.grid()
+    # ---------------- Eigenvalues + Fermi level + occupations ----------------
+    energies_eV = eigenvalues[:, 0] * au_eV
+    print("Eigenvalues in ev: ", energies_eV)
+
+    # occ_eig = occupations in eigenbasis (f_j), computed from rho_l via U^dag @ rho_l @ U
+    occ = occ_eig
+    print("Eigenbasis occupations:", occ)
+
+    # Define "mostly filled" and "mostly empty" with a 0.5 threshold
+    filled_idx = np.where(occ > 0.5)[0]
+    empty_idx  = np.where(occ < 0.5)[0]
+
+    if len(filled_idx) > 0 and len(empty_idx) > 0:
+        i_HO = filled_idx.max()   # highest occupied
+        i_LU = empty_idx.min()    # lowest unoccupied
+        # Fermi level: midpoint between HO and LU energies
+        E_F = 0.5 * (energies_eV[i_HO] + energies_eV[i_LU])
+    else:
+        # Fallbacks: all filled or all empty; just take median energy
+        E_F = np.median(energies_eV)
+
+    print("Estimated Fermi level (eV): ", E_F)
+
+    fig, ax1 = plt.subplots(figsize=(8, 6))
+    ax1.plot(energies_eV, 'o', label='Eigenvalues')
+    ax1.axhline(E_F, color='red', linestyle='--',
+                label=fr'$E_F \approx {E_F:.3f}\,\mathrm{{eV}}$')
+    ax1.set_xlabel('Index')
+    ax1.set_ylabel('Eigenvalue [eV]')
+    ax1.grid()
+
+    # Plot occupations on a secondary y-axis
+    ax2 = ax1.twinx()
+    ax2.plot(np.arange(len(occ)), occ, 'x-', color='green', label='Occupations')
+    ax2.set_ylabel('Occupation f')
+
+    # Combine legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc='best')
+
+    ax1.set_title('Eigenvalues, occupations and estimated Fermi level')
+
     plt.savefig(out_dir / "eigenvalues_plot.png", dpi=300, bbox_inches="tight")
 
     #plot of rho_j_space
@@ -257,4 +296,4 @@ def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole):#, rho_l_sp
     
     plt.close()
 
-baseplots(N_sites, time, eigenvalues, rho_j_NxN, rho_l_NxN, dipole)
+baseplots(N_sites, time, eigenvalues, rho_j_NxN, rho_l_NxN, dipole, occ_eig)
