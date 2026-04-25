@@ -1,0 +1,26 @@
+Detected 16 CPU threads
+Using 1 threads per simulation
+Running up to 16 simulations in parallel
+Starting combined mu sweep using configs/graphene_zigzag.toml
+Sigma output : sigma_mu_zigzag_2x2_rot0.txt
+Gauge output : gauge_metrics_mu_zigzag_2x2_rot0.txt
+Timeseries dir: gauge_ts_mu_zigzag_2x2_rot0
+
+Running mu = 2.3
+Running mu = 2.4
+Running mu = 2.5
+Running mu = 2.6
+Running mu = 2.7
+Running mu = 2.8
+Running mu = 2.9
+Running mu = 3.0
+Running mu = 3.1
+Running mu = 3.2
+Running mu = 3.3
+Running mu = 3.4
+Running mu = 3.5
+
+Sweep finished.
+Sigma results : sigma_mu_zigzag_2x2_rot0.txt
+Gauge results : gauge_metrics_mu_zigzag_2x2_rot0.txt
+Timeseries    : gauge_ts_mu_zigzag_2x2_rot0/
