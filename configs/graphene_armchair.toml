@@ -2,8 +2,8 @@
 lattice = "graphene"
 formation_shape = "triangle" # rectangle | triangle
 formation = "armchair"
-size_x = 4 
-size_y = 4
+size_x = 5
+size_y = 5
 rotation_angle_deg = 0
 
 # bond length (nm)
@@ -14,7 +14,7 @@ t1 = -2.8
 t2 = -2.8
 mu =  0.0
 gamma = 0.05
-spin_on = false
+spin_on = true
 
 
 [simulation]
@@ -36,7 +36,7 @@ sigma_ddf = 0.01
 B_ext = false
 
 [analysis]
-omega_cut_off = 3.5
+omega_cut_off = 5
 fourier_dt_fs = 0.01 # for pretty 0.001 or 0.005. HHG
 run_sigma_ext = true
 run_dipole_acc = false #true
@@ -49,7 +49,7 @@ Q_doping = 4.0                    # total extra electrons relative to neutral
 [features]
 coulomb = true
 coulomb_onsite_eV = 20.0 # Hubbard U (eV), 
-self_consistent_phase = false  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
-zeeman_external = false  
-zeeman_induced = false 
+self_consistent_phase = true  # enable: current -> A_ind -> phi_ind -> update hopping (induced phase loop)
+zeeman_external = true  
+zeeman_induced = true 
 

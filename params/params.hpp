@@ -86,6 +86,7 @@ struct Params
     bool coulomb_on;
     double coulomb_onsite_eV = 10.0;  // Hubbard U / onsite repulsion (eV), e.g. 5-10 for graphene
     bool self_consistent_phase;  // current -> A_ind -> phi_ind -> update hopping (induced phase)
+    bool peierls_induced;    // apply induced Peierls phases (L2); false = Zeeman-only (L1)
     bool zeeman_external;   // include external B in Zeeman diagonal μ_B σ·B
     bool zeeman_induced;    // include induced B (from A_ind) in Zeeman diagonal
 

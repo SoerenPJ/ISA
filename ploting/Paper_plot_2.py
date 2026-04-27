@@ -20,7 +20,7 @@ plt.rcParams.update({
 #graphene_armchair_1c2ccdd8d66aba19
 # ----------------------------------------------------------------
 #path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_14f441d4fe6c1d6b" #dipole_acc here
-path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_c8186f8d394b0c6e"
+path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_726df5e8c662a269"
 #path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_armchair_1c2ccdd8d66aba19"
 lattice  = np.loadtxt(f"{path}/lattice_points.txt")
 

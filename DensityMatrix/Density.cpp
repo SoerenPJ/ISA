@@ -143,6 +143,94 @@ Eigen::VectorXd compute_B_ind_z_2d(TimeTonianSolver* s) {
     return B_ind_z;
 }
 
+// Scalar bond current J_{ll'} = (2e/hbar) * Re(H0_{ll'}) * sum_sigma Im(rho_{ll',sigma})
+// for each bond. Used by both Biot-Savart and history saving.
+void compute_J_bonds(TimeTonianSolver* s, const MatrixC& rho, std::vector<double>& J_bonds) {
+    const int N_sites = s->N_sites;
+    const double eoh = s->e_charge / s->hbar;
+    J_bonds.resize(s->bonds.size());
+    for (size_t b = 0; b < s->bonds.size(); ++b) {
+        const int l  = s->bonds[b].first;
+        const int lp = s->bonds[b].second;
+        double im_rho = std::imag(rho(l, lp));
+        if (s->spin_on && l < N_sites && lp < N_sites)
+            im_rho += std::imag(rho(l + N_sites, lp + N_sites));
+        J_bonds[b] = 2.0 * eoh * s->H0(l, lp).real() * im_rho;
+    }
+}
+
+// Compute B_ind_z at each site via discrete Biot-Savart (Eq. 19 of SDU rules).
+// B_z(r_m) = (mu_0/4pi) * sum_{ll'} J_{ll'} * (ell_x*dy - ell_y*dx) / |r_m - r^c|^3
+// Sums over each bond once (bonds stored as i < j pairs).
+Eigen::VectorXd compute_biot_savart_B_z(TimeTonianSolver* s, const MatrixC& rho) {
+    const int N_sites = s->N_sites;
+    Eigen::VectorXd B_z = Eigen::VectorXd::Zero(N_sites);
+    if (s->bonds.empty() || static_cast<int>(s->points_2d.size()) != N_sites)
+        return B_z;
+
+    std::vector<double> J_bonds;
+    compute_J_bonds(s, rho, J_bonds);
+
+    const double prefactor = s->au_mu_0 / (4.0 * M_PI);
+
+    for (size_t b = 0; b < s->bonds.size(); ++b) {
+        const int l  = s->bonds[b].first;
+        const int lp = s->bonds[b].second;
+        if (l >= N_sites || lp >= N_sites) continue;
+
+        const double J = J_bonds[b];
+        const double xc = 0.5 * (s->points_2d[l][0] + s->points_2d[lp][0]);
+        const double yc = 0.5 * (s->points_2d[l][1] + s->points_2d[lp][1]);
+        const double lx = s->points_2d[l][0] - s->points_2d[lp][0];
+        const double ly = s->points_2d[l][1] - s->points_2d[lp][1];
+
+        for (int m = 0; m < N_sites; ++m) {
+            const double dx = s->points_2d[m][0] - xc;
+            const double dy = s->points_2d[m][1] - yc;
+            const double r2 = dx * dx + dy * dy;
+            if (r2 < 1e-20) continue;
+            const double r3 = r2 * std::sqrt(r2);
+            B_z(m) += prefactor * J * (lx * dy - ly * dx) / r3;
+        }
+    }
+    return B_z;
+}
+
+// Compute A_ind at each site using discrete Biot-Savart (Eq. 24 of SDU rules).
+// A_ind(r_m) = (mu_0/4pi) * sum_{ll'} J_{ll'} * ell_{ll'} / |r_m - r^c_{ll'}|
+// where ell_{ll'} = r_l - r_l' and r^c_{ll'} = (r_l + r_l') / 2.
+void compute_A_ind_biot_savart(TimeTonianSolver* s, const std::vector<double>& J_bonds,
+                                Eigen::VectorXd& A_x, Eigen::VectorXd& A_y) {
+    const int N_sites = s->N_sites;
+    A_x = Eigen::VectorXd::Zero(N_sites);
+    A_y = Eigen::VectorXd::Zero(N_sites);
+    if (s->bonds.empty() || static_cast<int>(s->points_2d.size()) != N_sites)
+        return;
+
+    const double prefactor = s->au_mu_0 / (4.0 * M_PI);
+
+    for (size_t b = 0; b < s->bonds.size(); ++b) {
+        const int l  = s->bonds[b].first;
+        const int lp = s->bonds[b].second;
+        if (l >= N_sites || lp >= N_sites) continue;
+
+        const double J  = J_bonds[b];
+        const double xc = 0.5 * (s->points_2d[l][0] + s->points_2d[lp][0]);
+        const double yc = 0.5 * (s->points_2d[l][1] + s->points_2d[lp][1]);
+        const double lx = s->points_2d[l][0] - s->points_2d[lp][0];   // ell_x = r_l - r_l'
+        const double ly = s->points_2d[l][1] - s->points_2d[lp][1];   // ell_y
+
+        for (int m = 0; m < N_sites; ++m) {
+            const double dx = s->points_2d[m][0] - xc;
+            const double dy = s->points_2d[m][1] - yc;
+            const double r  = std::sqrt(dx*dx + dy*dy);
+            if (r < 1e-10) continue;
+            A_x(m) += prefactor * J * lx / r;
+            A_y(m) += prefactor * J * ly / r;
+        }
+    }
+}
+
 // Add Zeeman term μ_B σ·B to diagonal: spin-up +μ_B B_z, spin-down −μ_B B_z (σ_z convention).
 void add_Zeeman_to_H(MatrixC& H, const Eigen::VectorXd& B_total_z, bool spin_on, int N_sites, double au_mu_B) {
     for (int i = 0; i < N_sites; ++i) {
@@ -194,19 +282,16 @@ void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC
         s->H_prev.rows() == N_mat;
 
     if (can_use_phases_2d) {
-        MatrixC J_x(N_mat, N_mat), J_y(N_mat, N_mat);
-        compute_current_operators(s->H_prev, s->P_x, s->P_y, eoh, J_x, J_y);
+        // Compute per-bond scalar currents J_{ll'} (Eq. 16 with phase from H_prev)
+        std::vector<double> J_bonds;
+        compute_J_bonds(s, rho, J_bonds);
 
-        Eigen::VectorXd J_l_x(N_sites), J_l_y(N_sites);
-        compute_bond_currents(rho, J_x, J_y, s->bonds, spin, N_sites, J_l_x, J_l_y);
+        // Induced vector potential at site positions (Eq. 24)
+        compute_A_ind_biot_savart(s, J_bonds, s->A_ind_x, s->A_ind_y);
 
-        ensure_J_l_eq_computed(s);
-
-        Eigen::VectorXd J_l_x_ind = J_l_x - s->J_l_x_eq;
-        Eigen::VectorXd J_l_y_ind = J_l_y - s->J_l_y_eq;
-        s->A_ind_x.noalias() = (s->au_mu_0 / s->area_2d) * (s->V_ee * J_l_x_ind);
-        s->A_ind_y.noalias() = (s->au_mu_0 / s->area_2d) * (s->V_ee * J_l_y_ind);
-
+        // Induced Peierls phases (Eq. 26): theta_{ij} = (e/hbar) * A_ind(r^c_{ij}) . ell_{ij}
+        // Midpoint approximation: A_ind(r^c) ≈ 0.5*(A_ind(r_i) + A_ind(r_j))
+        // Sign convention: ell_{ij} = r_i - r_j (bonds[b].first=i, .second=j)
         if (s->phi_ind.size() != s->bonds.size())
             s->phi_ind.resize(s->bonds.size());
         if (s->combined_phase.size() != s->bonds.size())
@@ -215,11 +300,11 @@ void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC
         for (size_t b = 0; b < s->bonds.size(); ++b) {
             const int i = s->bonds[b].first;
             const int j = s->bonds[b].second;
-            double dx = s->points_2d[j][0] - s->points_2d[i][0];
-            double dy = s->points_2d[j][1] - s->points_2d[i][1];
-            double A_avg_x = (s->A_ind_x(i) + s->A_ind_x(j)) * 0.5;
-            double A_avg_y = (s->A_ind_y(i) + s->A_ind_y(j)) * 0.5;
-            s->phi_ind[b] = (s->e_charge / s->hbar) * (A_avg_x * dx + A_avg_y * dy);
+            const double dx = s->points_2d[i][0] - s->points_2d[j][0];  // ell_x = r_i - r_j
+            const double dy = s->points_2d[i][1] - s->points_2d[j][1];  // ell_y
+            const double A_mid_x = (s->A_ind_x(i) + s->A_ind_x(j)) * 0.5;
+            const double A_mid_y = (s->A_ind_y(i) + s->A_ind_y(j)) * 0.5;
+            s->phi_ind[b] = (s->e_charge / s->hbar) * (A_mid_x * dx + A_mid_y * dy);
             s->combined_phase[b] = s->phi_ext[b] + s->phi_ind[b];
         }
 
@@ -274,12 +359,16 @@ void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC
         add_Hartree_to_H(H_out, rho_diag, s->rho0_diag, s->V_ee, s->e_charge, hartree_factor, spin, N_sites);
     }
 
-    // Zeeman diagonal: μ_B σ·B; B = (zeeman_use_external ? B_ext : 0) + (zeeman_use_induced ? B_ind : 0)
+    // Zeeman diagonal: μ_B σ·B
+    // L1: B_ind from direct Biot-Savart (zeeman_biot_savart)
+    // L2: B_ind from curl of A_ind (zeeman_use_induced + self_consistent_on)
     if (spin) {
         Eigen::VectorXd B_total_z = Eigen::VectorXd::Zero(N_sites);
         if (s->zeeman_use_external && s->B_ext_on)
             B_total_z.array() += s->B_ext_z;
-        if (s->zeeman_use_induced && s->self_consistent_on && !s->use_ssh_phases && static_cast<int>(s->points_2d.size()) == N_sites)
+        if (s->zeeman_biot_savart && !s->bonds.empty() && static_cast<int>(s->points_2d.size()) == N_sites)
+            B_total_z += compute_biot_savart_B_z(s, rho);
+        else if (s->zeeman_use_induced && s->self_consistent_on && !s->use_ssh_phases && static_cast<int>(s->points_2d.size()) == N_sites)
             B_total_z += compute_B_ind_z_2d(s);
         add_Zeeman_to_H(H_out, B_total_z, true, N_sites, s->au_mu_B);
     }
@@ -355,15 +444,31 @@ void RhoObserver::operator()(
     hist.J_x.push_back(std::real((rho_k * J_x).trace()));
     hist.J_y.push_back(std::real((rho_k * J_y).trace()));
 
+    // L1: save per-bond scalar currents and site-resolved B_ind_z
+    if (solver->zeeman_biot_savart && !solver->bonds.empty() &&
+        static_cast<int>(solver->points_2d.size()) == N_sites) {
+        std::vector<double> J_b;
+        compute_J_bonds(solver, rho_k, J_b);
+        hist.J_bond.push_back(J_b);
+
+        Eigen::VectorXd B_z = compute_biot_savart_B_z(solver, rho_k);
+        hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
+    }
+
     if (solver->self_consistent_on && !solver->bonds.empty() &&
-        solver->bonds.size() == solver->phi_ext.size()) {
-        ensure_J_l_eq_computed(solver);  // in case build_H_for_time didn't (e.g. first step)
-        Eigen::VectorXd J_l_x(N_sites), J_l_y(N_sites);
-        compute_bond_currents(rho_k, J_x, J_y, solver->bonds, spin, N_sites, J_l_x, J_l_y);
-        Eigen::VectorXd A_x = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * (J_l_x - solver->J_l_x_eq));
-        Eigen::VectorXd A_y = (solver->au_mu_0 / solver->area_2d) * (solver->V_ee * (J_l_y - solver->J_l_y_eq));
+        solver->bonds.size() == solver->phi_ext.size() &&
+        static_cast<int>(solver->points_2d.size()) == N_sites) {
+        // A_ind at sites via Biot-Savart (Eq. 24)
+        std::vector<double> J_bonds_obs;
+        compute_J_bonds(solver, rho_k, J_bonds_obs);
+        Eigen::VectorXd A_x(N_sites), A_y(N_sites);
+        compute_A_ind_biot_savart(solver, J_bonds_obs, A_x, A_y);
         hist.A_ind_x.push_back(std::vector<double>(A_x.data(), A_x.data() + N_sites));
         hist.A_ind_y.push_back(std::vector<double>(A_y.data(), A_y.data() + N_sites));
+
+        // Biot-Savart B for gauge comparison (gauge_comparison.py needs both A and B)
+        Eigen::VectorXd B_z = compute_biot_savart_B_z(solver, rho_k);
+        hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
     } else if (solver->self_consistent_on) {
         hist.A_ind_x.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
         hist.A_ind_y.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
@@ -709,6 +814,16 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.B_ext_z = solver.B_ext_on ? pot.compute_Bz() : 0.0;
     solver.zeeman_use_external = p.zeeman_external;
     solver.zeeman_use_induced = p.zeeman_induced;
+
+    // L1: Biot-Savart Zeeman — enabled when zeeman_induced=true, spin_on=true, 2D, and no Peierls (self_consistent_phase=false).
+    // The adaptive RK45 evaluates the RHS with the current rho at each substep, so no predictor-corrector is needed.
+    const bool l1_zeeman = p.zeeman_induced && p.spin_on && p.two_dim && !p.xl_2D.empty() && !p.self_consistent_phase;
+    solver.zeeman_biot_savart = l1_zeeman;
+    if (l1_zeeman && !solver.self_consistent_on) {
+        solver.bonds     = pot.get_bonds();
+        solver.points_2d = p.xl_2D;
+        solver.au_mu_0   = p.au_mu_0;
+    }
 
     // Uniform output times: same grid as non-strict (Fourier/dipole analysis). For strict solver we only record at these times to avoid memory blow-up.
     const double dt_out_au = p.fourier_dt_fs / p.au_fs;

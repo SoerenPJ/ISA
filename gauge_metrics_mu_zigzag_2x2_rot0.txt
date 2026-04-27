@@ -1,10 +1,10 @@
 # mu level corr_flux alpha_flux mean_rel_peak max_rel_peak mean_ratio_peak rms_flux_peak dynamic_range mean_rel_curl_peak
 2.3 L0 nan nan nan nan nan nan nan nan
 2.3 L1 nan nan nan nan nan nan nan nan
-2.3 L2 8.155957e-01 2.137477e+00 1.477347e+00 2.288242e+00 2.477347e+00 3.185200e-08 2.519439e+02 1.477347e+00
+2.3 L2 nan nan nan nan nan nan nan nan
 2.9 L0 nan nan nan nan nan nan nan nan
 2.9 L1 nan nan nan nan nan nan nan nan
-2.9 L2 8.155957e-01 2.137477e+00 1.477347e+00 2.288242e+00 2.477347e+00 3.185200e-08 2.519439e+02 1.477347e+00
+2.9 L2 nan nan nan nan nan nan nan nan
 3.5 L0 nan nan nan nan nan nan nan nan
 3.5 L1 nan nan nan nan nan nan nan nan
-3.5 L2 8.155957e-01 2.137477e+00 1.477347e+00 2.288242e+00 2.477347e+00 3.185200e-08 2.519439e+02 1.477347e+00
+3.5 L2 nan nan nan nan nan nan nan nan

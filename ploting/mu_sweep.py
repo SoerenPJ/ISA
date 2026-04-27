@@ -13,7 +13,7 @@ plt.rcParams.update({
     "ytick.labelsize": 16,
 })
 
-data = np.loadtxt("sigma_mu_zigzag_10x10_rot90.txt")
+data = np.loadtxt("sigma_mu_zigzag_2x2_rot0.txt")
 data = data[np.lexsort((data[:,1], data[:,0]))]
 
 mu = data[:,0]

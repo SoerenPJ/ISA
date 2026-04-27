@@ -6,7 +6,7 @@ echo "Building sim_mkl with MKL..."
 echo "MKLROOT = $MKLROOT"
 
 export MKL_NUM_THREADS=6
-export OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=6
 export OMP_PROC_BIND=TRUE
 export OMP_PLACES=cores
 

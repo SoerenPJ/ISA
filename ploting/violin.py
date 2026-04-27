@@ -4,8 +4,10 @@ from scipy.stats import gaussian_kde
 from matplotlib.patches import Patch
 
 structures = [
-    (90,  "AC-90",  "AC", "/home/soeren/University/masters/2.semester/ISA/Simulations/graphene_armchair_f90f0c2605e6284c/gauge_plots/flux_comparison_timeseries.txt"),
-    (330, "AC-330", "AC", "/home/soeren/University/masters/2.semester/ISA//Simulations/graphene_armchair_30890db2abe065aa/gauge_plots/flux_comparison_timeseries.txt"),
+    #(90,  "AC-90",  "AC", "/home/soeren/University/masters/2.semester/ISA/Simulations/graphene_armchair_f90f0c2605e6284c/gauge_plots/flux_comparison_timeseries.txt"),
+    (90, "AC-90", "AC", "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_892ca4ad051df8d1/gauge_plots/flux_comparison_timeseries.txt"), #bowtie-zz 5
+    #(330, "AC-330", "AC", "/home/soeren/University/masters/2.semester/ISA//Simulations/graphene_armchair_30890db2abe065aa/gauge_plots/flux_comparison_timeseries.txt"),
+    (280, "AC-330", "AC", "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_e2e23bd6488c6b27/gauge_plots/flux_comparison_timeseries.txt"),  #bowtie 10
     (1260, "AC-1260", "AC", "/home/soeren/University/masters/2.semester/ISA/Simulations/graphene_armchair_61e62e3e5f2c9346/gauge_plots/flux_comparison_timeseries.txt"),
     (46,  "ZZ-46",  "ZZ", "/home/soeren/University/masters/2.semester/ISA/Simulations/graphene_zigzag_73344dae63c56cd3/gauge_plots/flux_comparison_timeseries.txt"),
     (141, "ZZ-141", "ZZ", "/home/soeren/University/masters/2.semester/ISA/Simulations/graphene_zigzag_c7ce1f2e5c889dd5/gauge_plots/flux_comparison_timeseries.txt"),

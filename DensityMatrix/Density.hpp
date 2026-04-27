@@ -32,6 +32,9 @@ struct RhoHistory {
     // Induced vector potential per site when self_consistent_phase is on: A_ind_[xy][t][i]
     std::vector<std::vector<double>> A_ind_x;
     std::vector<std::vector<double>> A_ind_y;
+    // L1 outputs: scalar bond currents and site-resolved B_ind_z from Biot-Savart
+    std::vector<std::vector<double>> J_bond;   // J_bond[t][b] = J_{ll'}(t) for bond b
+    std::vector<std::vector<double>> B_ind_z;  // B_ind_z[t][i] = B_ind_z(r_i, t)
 };
 
 // =====================================================
@@ -130,7 +133,8 @@ struct TimeTonianSolver {
     double B_ext_z = 0.0;   // external B_z in a.u. (when B_ext_on)
     double au_mu_B = 0.5;   // Bohr magneton in a.u. (eℏ/2m_e = 1/2)
     bool zeeman_use_external = true;  // include B_ext in Zeeman
-    bool zeeman_use_induced = true;   // include B_ind (from A_ind) in Zeeman
+    bool zeeman_use_induced = true;   // include B_ind (from A_ind) in Zeeman (L2)
+    bool zeeman_biot_savart = false;  // L1: compute B_ind directly via Biot-Savart from bond currents
 
     // Optional spatial symmetry debug (inversion / permutations in site space).
 #ifdef DEBUG_SYMMETRY

@@ -375,11 +375,39 @@
         {
             ofstream fout(out_dir / "current_time_evolution.txt");
             fout << "# t  Jx  Jy\n";
-        
+
             for (size_t k = 0; k < history.time.size(); ++k) {
                 fout << history.time[k] << " "
                     << history.J_x[k] << " "
                     << history.J_y[k] << "\n";
+            }
+        }
+
+        // L1: per-bond scalar currents
+        if (!history.J_bond.empty()) {
+            ofstream fout(out_dir / "J_bond_time_evolution.txt");
+            const int N_b = static_cast<int>(history.J_bond[0].size());
+            fout << "# t";
+            for (int b = 0; b < N_b; ++b) fout << "  J_bond_" << b;
+            fout << "\n";
+            for (size_t k = 0; k < history.time.size(); ++k) {
+                fout << history.time[k];
+                for (int b = 0; b < N_b; ++b) fout << " " << history.J_bond[k][b];
+                fout << "\n";
+            }
+        }
+
+        // L1: site-resolved B_ind_z from Biot-Savart
+        if (!history.B_ind_z.empty()) {
+            ofstream fout(out_dir / "B_ind_z_time_evolution.txt");
+            const int N_s = static_cast<int>(history.B_ind_z[0].size());
+            fout << "# t";
+            for (int i = 0; i < N_s; ++i) fout << "  B_z_" << i;
+            fout << "\n";
+            for (size_t k = 0; k < history.time.size(); ++k) {
+                fout << history.time[k];
+                for (int i = 0; i < N_s; ++i) fout << " " << history.B_ind_z[k][i];
+                fout << "\n";
             }
         }
 
