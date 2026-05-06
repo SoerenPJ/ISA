@@ -79,7 +79,7 @@ run_sim() {
     local cfg=$1
     local out
     out=$(./sim_mkl "$cfg" 2>&1)
-    echo "$out" | grep "All outputs saved under" | awk '{print $NF}'
+    echo "$out" | grep "All outputs saved under" | awk '{print $NF}' | tr -d '"'
 }
 
 # ---------- Per-mu worker ----------
