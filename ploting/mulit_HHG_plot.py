@@ -50,8 +50,9 @@ au_omega_fourier = 0.0
 
 
 
-#============================clean HHG=============================
-dipole_acc_data_clean = np.loadtxt("/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_armchair_82f57bbcb8a4fdb/dipole_acc.txt")
+#============================0.2 omega HHG=============================
+#dipole_acc_data_clean = np.loadtxt("/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_triangle_95e964ffc68d83e0/dipole_acc.txt")#size_5
+dipole_acc_data_clean= np.loadtxt("Simulations/graphene_zigzag_triangle_22cf104330d2fc4c/dipole_acc.txt") # size_10 L2 + Hubbard    
 omega_eV = dipole_acc_data_clean[:,0] * au_eV
 dipole_acc_data_clean = dipole_acc_data_clean[:, 1] + 1j * dipole_acc_data_clean[:, 2]  # shape (N,)
 y_axis = np.abs(dipole_acc_data_clean)**2
@@ -64,9 +65,28 @@ omega_01 = omega_eV[index1]
 x_val1 = omega_eV / omega_01
 y_val1 = y_axis / y_axis[index1]
 
-#===============HHG with everything=================================
 
-dipole_acc_data = np.loadtxt("/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_armchair_41e7a5e211524f7a/dipole_acc.txt")
+
+dipole_acc_data_3 = np.loadtxt("Simulations/graphene_zigzag_triangle_fbc7b17fbe5749cf/dipole_acc.txt") # size 10 L2 + hartree groundstate
+omega_eV_3 = dipole_acc_data_3[:,0] * au_eV
+dipole_acc_data_3 = dipole_acc_data_3[:, 1] + 1j * dipole_acc_data_3[:, 2]  # shape (N,)
+y_axis_3 = (np.abs(dipole_acc_data_3)**2) 
+
+
+# Find resonance frequency (maximum intensity)
+index_3 = np.argmax(y_axis_3)
+omega_0_3 = omega_eV_3[index_3]
+
+# Normalize axes 
+x_val_3 = omega_eV_3 / omega_0_3
+y_val_3 = y_axis_3 / y_axis[index_3]
+
+
+
+
+
+#dipole_acc_data = np.loadtxt("/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_triangle_78b9e8ddcebf3b4b/dipole_acc.txt") 
+dipole_acc_data = np.loadtxt("Simulations/graphene_zigzag_triangle_fd149d5db3aa0ce0/dipole_acc.txt") # size 10 L2
 omega_eV = dipole_acc_data[:,0] * au_eV
 dipole_acc_data = dipole_acc_data[:, 1] + 1j * dipole_acc_data[:, 2]  # shape (N,)
 y_axis = (np.abs(dipole_acc_data)**2) 
@@ -82,11 +102,31 @@ y_val = y_axis / y_axis[index]
 
 
 
+
+
+dipole_acc_data_2 = np.loadtxt("Simulations/graphene_zigzag_triangle_fbc7b17fbe5749cf/dipole_acc.txt") # size 10 L0
+omega_eV = dipole_acc_data_2[:,0] * au_eV
+dipole_acc_data_2 = dipole_acc_data_2[:, 1] + 1j * dipole_acc_data_2[:, 2]  # shape (N,)
+y_axis_2 = (np.abs(dipole_acc_data_2)**2) 
+
+
+# Find resonance frequency (maximum intensity)
+index_2 = np.argmax(y_axis_2)
+omega_0_2 = omega_eV[index_2]
+
+# Normalize axes 
+x_val_2 = omega_eV / omega_0_2
+y_val_2 = y_axis_2 / y_axis[index_2]
+
+
+
 plt.rc('text', usetex=True)
 
 fig, ax = plt.subplots(figsize=(6,4))
-ax.plot(x_val1, y_val1, linewidth=1, label = "clean", color= "k")
-ax.plot(x_val, y_val, linewidth = 1, label = "all", color= "m")
+ax.plot(x_val1, y_val1, linewidth=1, label = "Omega 0.19, L2 + Hubbard", color= "k")
+ax.plot(x_val, y_val, linewidth = 1, label = "Omega 0.19, L2", color= "m")
+ax.plot(x_val_2, y_val_2, linewidth = 1, label = "Omega 0.19, L0", color = "g")
+ax.plot(x_val_3, y_val_3, linewidth = 1, label = "Omega 0.19, L2", color = "b")
 
 ax.set_yscale("log")
 ax.set_xlabel(r'$\hbar\omega /\omega_0 $', fontsize=24)
@@ -97,10 +137,10 @@ ax.tick_params(labelsize=12)
 ax.tick_params(labelsize=12)
 from matplotlib.ticker import FixedLocator
 
-ax.set_xlim(0, 7)
+ax.set_xlim(0, 12)
 
 # Force fixed odd ticks
-ax.xaxis.set_major_locator(FixedLocator(np.arange(1, 7, 2)))
+ax.xaxis.set_major_locator(FixedLocator(np.arange(12)))
 
 # Turn off minors completely
 ax.xaxis.set_minor_locator(FixedLocator([]))
@@ -110,5 +150,5 @@ ax.grid(which='major', linestyle='-', linewidth=0.8)
 ax.legend(loc='best', fontsize=22)
 plt.tight_layout()
 
-plt.savefig("HHG_AC_rot_90.png", dpi=300, bbox_inches="tight")
+plt.savefig("HHG_Hubbard.png", dpi=300, bbox_inches="tight")
 plt.show()

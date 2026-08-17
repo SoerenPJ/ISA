@@ -3,11 +3,13 @@
 #include "params/params.hpp"
 #include "Hamiltonians/potential.hpp"
 #include "Hamiltonians/hamiltonian.hpp"
+#include "Observables/observables.hpp"
 
 #include <numeric>
 #include <algorithm>
 #include <complex>
 #include <fstream>
+#include <iostream>
 
 #include <boost/numeric/odeint/stepper/runge_kutta_dopri5.hpp>
 #include <boost/numeric/odeint/stepper/controlled_runge_kutta.hpp>
@@ -145,31 +147,75 @@ Eigen::VectorXd compute_B_ind_z_2d(TimeTonianSolver* s) {
 
 // Scalar bond current J_{ll'} = (2e/hbar) * Re(H0_{ll'}) * sum_sigma Im(rho_{ll',sigma})
 // for each bond. Used by both Biot-Savart and history saving.
-void compute_J_bonds(TimeTonianSolver* s, const MatrixC& rho, std::vector<double>& J_bonds) {
+// When phases is provided (L2), uses the full Eq. (16) with Peierls phase theta:
+//   J_{ll'} = (2e/hbar) Re(H_{ll'}) * (Im(rho) cos(theta) - Re(rho) sin(theta))
+// Without phases (theta=0, L0/L1) this reduces to (2e/hbar) Re(H) Im(rho).
+void compute_J_bonds(TimeTonianSolver* s, const MatrixC& rho, std::vector<double>& J_bonds,
+                     const std::vector<double>* phases = nullptr) {
     const int N_sites = s->N_sites;
     const double eoh = s->e_charge / s->hbar;
     J_bonds.resize(s->bonds.size());
     for (size_t b = 0; b < s->bonds.size(); ++b) {
         const int l  = s->bonds[b].first;
         const int lp = s->bonds[b].second;
-        double im_rho = std::imag(rho(l, lp));
-        if (s->spin_on && l < N_sites && lp < N_sites)
-            im_rho += std::imag(rho(l + N_sites, lp + N_sites));
-        J_bonds[b] = 2.0 * eoh * s->H0(l, lp).real() * im_rho;
+        const double h_re = s->H0(l, lp).real();
+        double val;
+        if (phases && b < phases->size()) {
+            // Eq. (16): J = (2e/hbar) Re(H) Im(e^{-iθ} rho_{ll',σ}) summed over σ
+            // Derived from ie/hbar * [e^{iθ} rho* - e^{-iθ} rho] = 2e/hbar * Im(e^{-iθ} rho)
+            const std::complex<double> e_neg_itheta(std::cos((*phases)[b]), -std::sin((*phases)[b]));
+            val = std::imag(e_neg_itheta * rho(l, lp));
+            if (s->spin_on && l < N_sites && lp < N_sites)
+                val += std::imag(e_neg_itheta * rho(l + N_sites, lp + N_sites));
+        } else {
+            val = std::imag(rho(l, lp));
+            if (s->spin_on && l < N_sites && lp < N_sites)
+                val += std::imag(rho(l + N_sites, lp + N_sites));
+        }
+        J_bonds[b] = 2.0 * eoh * h_re * val;
+    }
+}
+
+// Per-bond SPIN current: same as compute_J_bonds but the up and down channels are
+// SUBTRACTED (the charge current sums them):
+//   J^spin_{ll'} = (2e/hbar) Re(H_{ll'}) [ Im(rho_up_{ll'}) - Im(rho_dn_{ll'}) ]
+// with the optional Peierls phase theta (Eq. 16). Zero unless spin_on.
+void compute_J_bonds_spin(TimeTonianSolver* s, const MatrixC& rho, std::vector<double>& J_bonds,
+                          const std::vector<double>* phases = nullptr) {
+    const int N_sites = s->N_sites;
+    const double eoh = s->e_charge / s->hbar;
+    J_bonds.assign(s->bonds.size(), 0.0);
+    if (!s->spin_on) return;
+    for (size_t b = 0; b < s->bonds.size(); ++b) {
+        const int l  = s->bonds[b].first;
+        const int lp = s->bonds[b].second;
+        if (l >= N_sites || lp >= N_sites) continue;
+        const double h_re = s->H0(l, lp).real();
+        double val;
+        if (phases && b < phases->size()) {
+            const std::complex<double> e_neg_itheta(std::cos((*phases)[b]), -std::sin((*phases)[b]));
+            val = std::imag(e_neg_itheta * rho(l, lp))
+                - std::imag(e_neg_itheta * rho(l + N_sites, lp + N_sites));
+        } else {
+            val = std::imag(rho(l, lp)) - std::imag(rho(l + N_sites, lp + N_sites));
+        }
+        J_bonds[b] = 2.0 * eoh * h_re * val;
     }
 }
 
 // Compute B_ind_z at each site via discrete Biot-Savart (Eq. 19 of SDU rules).
 // B_z(r_m) = (mu_0/4pi) * sum_{ll'} J_{ll'} * (ell_x*dy - ell_y*dx) / |r_m - r^c|^3
 // Sums over each bond once (bonds stored as i < j pairs).
-Eigen::VectorXd compute_biot_savart_B_z(TimeTonianSolver* s, const MatrixC& rho) {
+// When phases is provided (L2), bond currents are computed with the full Eq. (16).
+Eigen::VectorXd compute_biot_savart_B_z(TimeTonianSolver* s, const MatrixC& rho,
+                                         const std::vector<double>* phases = nullptr) {
     const int N_sites = s->N_sites;
     Eigen::VectorXd B_z = Eigen::VectorXd::Zero(N_sites);
     if (s->bonds.empty() || static_cast<int>(s->points_2d.size()) != N_sites)
         return B_z;
 
     std::vector<double> J_bonds;
-    compute_J_bonds(s, rho, J_bonds);
+    compute_J_bonds(s, rho, J_bonds, phases);
 
     const double prefactor = s->au_mu_0 / (4.0 * M_PI);
 
@@ -282,9 +328,9 @@ void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC
         s->H_prev.rows() == N_mat;
 
     if (can_use_phases_2d) {
-        // Compute per-bond scalar currents J_{ll'} (Eq. 16 with phase from H_prev)
+        // Compute per-bond scalar currents J_{ll'} (Eq. 16 with phases from previous step)
         std::vector<double> J_bonds;
-        compute_J_bonds(s, rho, J_bonds);
+        compute_J_bonds(s, rho, J_bonds, s->combined_phase.empty() ? nullptr : &s->combined_phase);
 
         // Induced vector potential at site positions (Eq. 24)
         compute_A_ind_biot_savart(s, J_bonds, s->A_ind_x, s->A_ind_y);
@@ -351,25 +397,63 @@ void build_H_for_time(TimeTonianSolver* s, const MatrixC& rho, double t, MatrixC
         H_out = s->H0;
     }
 
+    // Frozen Hubbard exchange field. H0 is kept pure (no mean field), so add it
+    // here in every branch — including the self-consistent ones that rebuild
+    // H_out from the hopping and would otherwise drop it, making the magnetic
+    // rho0 non-stationary.
+    if (s->hubbard_on && spin) {
+        // Unified onsite Hubbard field, following SSH__Spin_current-1.pdf ("New
+        // model", Eq. 25/26): a single spin-resolved onsite U with NO charge/spin
+        // channel split. The classical Hartree term below runs with a ZEROED
+        // diagonal (V_ee_hartree), so the whole onsite response lives here:
+        //
+        //     V_{iσ}(t) = U ( n_{i,-σ}(t) - 1/2 ).
+        //
+        // The frozen equilibrium part (incl. the nonlocal Hartree φ_final) sits in
+        // hub_V_up/dn = φ_final + U(n_{i,-σ}^eq - 1/2); add only the live opposite-
+        // spin deviation U( n_{i,-σ}(t) - n_{i,-σ}^eq ) with the SAME single U. At
+        // t=0 the deviation vanishes, recovering the frozen field, so the magnetic
+        // rho0 stays stationary. (The old charge+spin split with a separate Stoner
+        // U_spin was only valid when the onsite Hartree was retained; it is gone.)
+        for (int i = 0; i < N_sites; ++i) {
+            const double n_up_i = std::real(rho(i, i));
+            const double n_dn_i = std::real(rho(N_sites + i, N_sites + i));
+
+            H_out(i, i)                     += s->hub_V_up(i) + s->hub_U * (n_dn_i - s->hub_n_dn_eq(i));
+            H_out(N_sites + i, N_sites + i) += s->hub_V_dn(i) + s->hub_U * (n_up_i - s->hub_n_up_eq(i));
+        }
+    } else if (s->hubbard_on) {
+        // Spinless hartree_scf ground state: U is always 0 here (no spin channel to
+        // split), so there is no live deviation term — just re-add the frozen static
+        // field phi_eq every step (H0 is kept pure, same reasoning as the spin branch).
+        for (int i = 0; i < N_sites; ++i)
+            H_out(i, i) += s->hub_V_up(i);
+    }
+
     add_Vext_to_H(H_out, Vext, spin, N_sites);
 
     if (s->coulomb_on) {
         Eigen::VectorXd rho_diag = rho_diag_from_rho(rho, N_sites, spin);
         const double hartree_factor = spin ? 1.0 : 2.0;
-        add_Hartree_to_H(H_out, rho_diag, s->rho0_diag, s->V_ee, s->e_charge, hartree_factor, spin, N_sites);
+        // V_ee_hartree == V_ee, except with a zeroed diagonal when the Hubbard is
+        // active: the onsite Coulomb is then the Hubbard U, added in the block above.
+        add_Hartree_to_H(H_out, rho_diag, s->rho0_diag, s->V_ee_hartree, s->e_charge, hartree_factor, spin, N_sites);
     }
 
     // Zeeman diagonal: μ_B σ·B
-    // L1: B_ind from direct Biot-Savart (zeeman_biot_savart)
-    // L2: B_ind from curl of A_ind (zeeman_use_induced + self_consistent_on)
+    // L2: B_ind = curl(A_ind) — A_ind already updated in the can_use_phases_2d block above.
+    // L1: B_ind from direct Biot-Savart (Eq. 19).
     if (spin) {
         Eigen::VectorXd B_total_z = Eigen::VectorXd::Zero(N_sites);
         if (s->zeeman_use_external && s->B_ext_on)
             B_total_z.array() += s->B_ext_z;
-        if (s->zeeman_biot_savart && !s->bonds.empty() && static_cast<int>(s->points_2d.size()) == N_sites)
-            B_total_z += compute_biot_savart_B_z(s, rho);
-        else if (s->zeeman_use_induced && s->self_consistent_on && !s->use_ssh_phases && static_cast<int>(s->points_2d.size()) == N_sites)
-            B_total_z += compute_B_ind_z_2d(s);
+        if (s->zeeman_use_induced) {
+            if (can_use_phases_2d)
+                B_total_z += compute_B_ind_z_2d(s);
+            else if (s->zeeman_biot_savart && !s->bonds.empty() &&
+                     static_cast<int>(s->points_2d.size()) == N_sites)
+                B_total_z += compute_biot_savart_B_z(s, rho);
+        }
         add_Zeeman_to_H(H_out, B_total_z, true, N_sites, s->au_mu_B);
     }
 }
@@ -419,19 +503,58 @@ void RhoObserver::operator()(
     const bool spin   = solver->spin_on;
 
     hist.time.push_back(t);
-    hist.diag.emplace_back(N_sites);
 
+    // Extract site occupations into a local vector (needed for dipole and/or rho_diag output)
+    Eigen::VectorXd occ_vec(N_sites);
     for (int i = 0; i < N_sites; ++i) {
         double occ = std::real(rho_vec[i * N_mat + i]);
         if (spin)
             occ += std::real(rho_vec[(i + N_sites) * N_mat + (i + N_sites)]);
-        hist.diag.back()[i] = occ;
+        occ_vec(i) = occ;
+    }
+
+    // Online dipole computation: avoids keeping the full per-site diag array in RAM.
+    // Required for sigma_ext; rho0_diag_ref is set when streaming rho_diag to disk.
+    if (rho0_diag_ref.size() == N_sites) {
+        double dip = compute_dipole_moment_from_diag(occ_vec, rho0_diag_ref, xl_x_ref,
+                                                     e_charge_ref, spin_on_ref);
+        hist.dipole_t.push_back(dip);
+    }
+
+    // rho_diag: stream to disk or accumulate in hist.diag
+    if (f_rho_diag && f_rho_diag->is_open()) {
+        *f_rho_diag << t;
+        for (int i = 0; i < N_sites; ++i) *f_rho_diag << ' ' << occ_vec(i);
+        *f_rho_diag << '\n';
+    } else {
+        hist.diag.emplace_back(occ_vec.data(), occ_vec.data() + N_sites);
+    }
+
+    // spin-resolved induced diagonal: rho_ii(t) - rho0_ii for all N_mat states, real only
+    // (diagonal of a Hermitian rho is real). Ordered [up_0..up_{N-1}, dn_0..dn_{N-1}] when spin.
+    if (f_spin_diag && f_spin_diag->is_open()) {
+        *f_spin_diag << t;
+        for (int i = 0; i < N_mat; ++i)
+            *f_spin_diag << ' ' << (std::real(rho_vec[i * N_mat + i]) - std::real(solver->rho0(i, i)));
+        *f_spin_diag << '\n';
     }
 
     MatrixC rho_k(N_mat, N_mat);
     for (int i = 0; i < N_mat; ++i)
         for (int j = 0; j < N_mat; ++j)
             rho_k(i, j) = rho_vec[i * N_mat + j];
+
+    // Full induced density matrix rho(t)-rho0 (site basis), streamed on the output stride.
+    // One line per step: t  then Re Im pairs for all N_mat*N_mat elements (row-major).
+    if (f_rho_full && f_rho_full->is_open()) {
+        *f_rho_full << t;
+        for (int i = 0; i < N_mat; ++i)
+            for (int j = 0; j < N_mat; ++j) {
+                const std::complex<double> d = rho_vec[i * N_mat + j] - solver->rho0(i, j);
+                *f_rho_full << ' ' << d.real() << ' ' << d.imag();
+            }
+        *f_rho_full << '\n';
+    }
 
     // H(t, rho) same as RHS so stored J and A_ind match dynamics
     MatrixC H_t(N_mat, N_mat);
@@ -444,34 +567,109 @@ void RhoObserver::operator()(
     hist.J_x.push_back(std::real((rho_k * J_x).trace()));
     hist.J_y.push_back(std::real((rho_k * J_y).trace()));
 
-    // L1: save per-bond scalar currents and site-resolved B_ind_z
+    if (spin) {
+        MatrixC rho_up = rho_k.block(0,       0,       N_sites, N_sites);
+        MatrixC rho_dn = rho_k.block(N_sites, N_sites, N_sites, N_sites);
+        MatrixC Jx_up  =   J_x.block(0,       0,       N_sites, N_sites);
+        MatrixC Jy_up  =   J_y.block(0,       0,       N_sites, N_sites);
+        MatrixC Jx_dn  =   J_x.block(N_sites, N_sites, N_sites, N_sites);
+        MatrixC Jy_dn  =   J_y.block(N_sites, N_sites, N_sites, N_sites);
+        hist.J_up_x.push_back(std::real((rho_up * Jx_up).trace()));
+        hist.J_up_y.push_back(std::real((rho_up * Jy_up).trace()));
+        hist.J_dn_x.push_back(std::real((rho_dn * Jx_dn).trace()));
+        hist.J_dn_y.push_back(std::real((rho_dn * Jy_dn).trace()));
+    }
+
+    // Per-bond spin current (for real-space spin-current maps). Uses the same
+    // Peierls phases as the charge bond current when they are present (L2).
+    if (spin && f_J_spin_bond && f_J_spin_bond->is_open() &&
+        !solver->bonds.empty() && static_cast<int>(solver->points_2d.size()) == N_sites) {
+        const std::vector<double>* ph =
+            solver->combined_phase.size() == solver->bonds.size() ? &solver->combined_phase : nullptr;
+        std::vector<double> Js_b;
+        compute_J_bonds_spin(solver, rho_k, Js_b, ph);
+        *f_J_spin_bond << t;
+        for (double v : Js_b) *f_J_spin_bond << ' ' << v;
+        *f_J_spin_bond << '\n';
+    }
+
+    // L1: per-bond scalar currents and site-resolved B_ind_z from Biot-Savart
     if (solver->zeeman_biot_savart && !solver->bonds.empty() &&
         static_cast<int>(solver->points_2d.size()) == N_sites) {
         std::vector<double> J_b;
         compute_J_bonds(solver, rho_k, J_b);
-        hist.J_bond.push_back(J_b);
+
+        if (f_J_bond_zeeman && f_J_bond_zeeman->is_open()) {
+            *f_J_bond_zeeman << t;
+            for (double v : J_b) *f_J_bond_zeeman << ' ' << v;
+            *f_J_bond_zeeman << '\n';
+        } else {
+            hist.J_bond.push_back(J_b);
+        }
 
         Eigen::VectorXd B_z = compute_biot_savart_B_z(solver, rho_k);
-        hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
+        if (f_B_ind_z_zeeman && f_B_ind_z_zeeman->is_open()) {
+            *f_B_ind_z_zeeman << t;
+            for (int i = 0; i < N_sites; ++i) *f_B_ind_z_zeeman << ' ' << B_z(i);
+            *f_B_ind_z_zeeman << '\n';
+        } else {
+            hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
+        }
     }
 
     if (solver->self_consistent_on && !solver->bonds.empty() &&
         solver->bonds.size() == solver->phi_ext.size() &&
         static_cast<int>(solver->points_2d.size()) == N_sites) {
-        // A_ind at sites via Biot-Savart (Eq. 24)
+        // A_ind at sites via Biot-Savart (Eq. 24); use Eq. (16) phases for J consistency
+        const std::vector<double>* obs_phases =
+            solver->combined_phase.size() == solver->bonds.size() ? &solver->combined_phase : nullptr;
         std::vector<double> J_bonds_obs;
-        compute_J_bonds(solver, rho_k, J_bonds_obs);
+        compute_J_bonds(solver, rho_k, J_bonds_obs, obs_phases);
+
+        if (f_J_bond_sc && f_J_bond_sc->is_open()) {
+            *f_J_bond_sc << t;
+            for (double v : J_bonds_obs) *f_J_bond_sc << ' ' << v;
+            *f_J_bond_sc << '\n';
+        } else {
+            hist.J_bond.push_back(J_bonds_obs);
+        }
+
         Eigen::VectorXd A_x(N_sites), A_y(N_sites);
         compute_A_ind_biot_savart(solver, J_bonds_obs, A_x, A_y);
-        hist.A_ind_x.push_back(std::vector<double>(A_x.data(), A_x.data() + N_sites));
-        hist.A_ind_y.push_back(std::vector<double>(A_y.data(), A_y.data() + N_sites));
 
-        // Biot-Savart B for gauge comparison (gauge_comparison.py needs both A and B)
-        Eigen::VectorXd B_z = compute_biot_savart_B_z(solver, rho_k);
-        hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
+        if (f_A_ind && f_A_ind->is_open()) {
+            *f_A_ind << t;
+            for (int i = 0; i < N_sites; ++i) *f_A_ind << ' ' << A_x(i) << ' ' << A_y(i);
+            *f_A_ind << '\n';
+        } else {
+            hist.A_ind_x.push_back(std::vector<double>(A_x.data(), A_x.data() + N_sites));
+            hist.A_ind_y.push_back(std::vector<double>(A_y.data(), A_y.data() + N_sites));
+        }
+
+        // Biot-Savart B for gauge comparison; reuse same J_bonds_obs (same phases) for consistency
+        Eigen::VectorXd B_z = compute_biot_savart_B_z(solver, rho_k, obs_phases);
+        if (f_B_ind_z_sc && f_B_ind_z_sc->is_open()) {
+            *f_B_ind_z_sc << t;
+            for (int i = 0; i < N_sites; ++i) *f_B_ind_z_sc << ' ' << B_z(i);
+            *f_B_ind_z_sc << '\n';
+        } else {
+            hist.B_ind_z.push_back(std::vector<double>(B_z.data(), B_z.data() + N_sites));
+        }
+
+        // curl(A_ind) = correct L2 Zeeman B field; update solver A_ind fields from current A_x/A_y
+        if (f_B_ind_z_curl && f_B_ind_z_curl->is_open()) {
+            solver->A_ind_x = A_x;
+            solver->A_ind_y = A_y;
+            Eigen::VectorXd B_curl = compute_B_ind_z_2d(solver);
+            *f_B_ind_z_curl << t;
+            for (int i = 0; i < N_sites; ++i) *f_B_ind_z_curl << ' ' << B_curl(i);
+            *f_B_ind_z_curl << '\n';
+        }
     } else if (solver->self_consistent_on) {
-        hist.A_ind_x.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
-        hist.A_ind_y.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
+        if (!(f_A_ind && f_A_ind->is_open())) {
+            hist.A_ind_x.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
+            hist.A_ind_y.push_back(std::vector<double>(static_cast<size_t>(N_sites), 0.0));
+        }
     }
 
     if (counter % 5000 == 0)
@@ -545,10 +743,16 @@ MatrixC Rho_0(const Eigen::VectorXcd& epsilon, double mu, double T) {
 
     MatrixC Rho = MatrixC::Zero(N, N);
 
+    // Clamp negligible Fermi-Dirac tails to exact 0 / 1. With a large gap (e.g.
+    // the Hubbard exchange gap) empty/full states get f ~ 1e-58 / 1 - 1e-58,
+    // which is numerically 0/1 but clutters printouts and rho0 output files.
+    const double f_tol = 1e-12;
     for (int i = 0; i < N; ++i) {
         double Ei = epsilon(i).real();
         double x  = (Ei - mu) / (kb * T);
         double f  = 1.0 / (exp(x) + 1.0);
+        if (f < f_tol)          f = 0.0;
+        else if (f > 1.0 - f_tol) f = 1.0;
         Rho(i, i) = complex<double>(f, 0.0);
     }
 
@@ -679,10 +883,25 @@ void TimeTonianSolver::operator()(
 // -------------------------------------------------------------
 // 6. Time evolution 
 // -------------------------------------------------------------
-MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, Potential &pot, 
-    const std::string &mode, 
+MatrixC evolve_rho_over_time(
+    const MatrixC &rho_initial_l, const MatrixC &Hc, Potential &pot,
+    const std::string &mode,
     const Params &p,
-    RhoHistory &history)
+    RhoHistory &history,
+    std::ofstream *f_J_bond_zeeman,
+    std::ofstream *f_B_ind_z_zeeman,
+    std::ofstream *f_J_bond_sc,
+    std::ofstream *f_B_ind_z_sc,
+    std::ofstream *f_B_ind_z_curl,
+    std::ofstream *f_A_ind,
+    std::ofstream *f_rho_diag,
+    std::ofstream *f_rho_full,
+    std::ofstream *f_spin_diag,
+    std::ofstream *f_J_spin_bond,
+    const Eigen::VectorXd *rho0_diag_online,
+    const Eigen::VectorXd *xl_x_online,
+    int  e_charge_online,
+    bool spin_on_online)
 
 {
     const int N_sites = p.N;         // number of spatial sites
@@ -699,8 +918,29 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.N_sites = N_sites;
     solver.spin_on = p.spin_on;
     solver.H0      = Hc;
+    // hub_active also covers the spinless hartree_scf ground state (p.spin_on ==
+    // false), which build_H_for_time re-adds through the !spin branch below.
+    solver.hubbard_on = p.hub_active;
+    if (solver.hubbard_on) {
+        solver.hub_V_up    = p.hub_V_up;
+        solver.hub_V_dn    = p.hub_V_dn;
+        solver.hub_U       = p.hub_U;
+        solver.hub_n_up_eq = p.hub_n_up_eq;
+        solver.hub_n_dn_eq = p.hub_n_dn_eq;
+    }
     solver.coulomb_on = p.coulomb_on;
-    solver.V_ee       = p.V_ee;          // site-space Coulomb
+    solver.V_ee       = p.V_ee;          // site-space Coulomb (full, incl. onsite)
+    // Hartree kernel: same matrix, but with the onsite element removed whenever the
+    // Hubbard is active, so v(0) is not counted twice (once as U, once as the
+    // Hartree diagonal). The full V_ee is kept for the induced-vector-potential
+    // (current-current) kernel, which the Hubbard does not replace.
+    // hartree_scf is the exception: there U = 0 and the onsite Coulomb IS the Hartree
+    // diagonal (the SCF ground state was built with the full kernel), so keeping the
+    // diagonal here is what makes the static and dynamic Hartree the same model —
+    // both sum over all j, phi_i(t) = sum_j V_ee(i,j) (n_j(t) - 1).
+    solver.V_ee_hartree = p.V_ee;
+    if (solver.hubbard_on && !p.hartree_scf)
+        solver.V_ee_hartree.diagonal().setZero();
     solver.e_charge   = p.e;
             
     solver.gamma = p.gamma;
@@ -790,7 +1030,9 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
         }
     }
 
-    if (solver.coulomb_on) {
+    // rho0_diag is the equilibrium charge reference for BOTH the Hartree term and
+    // the onsite Hubbard charge channel, so it is needed whenever either is on.
+    if (solver.coulomb_on || solver.hubbard_on) {
         solver.rho0_diag = rho_diag_from_rho(rho_initial_l, N_sites, solver.spin_on);
         // Start with zero induced density / Hartree potential
         solver.rho_diag.setZero();
@@ -815,11 +1057,10 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     solver.zeeman_use_external = p.zeeman_external;
     solver.zeeman_use_induced = p.zeeman_induced;
 
-    // L1: Biot-Savart Zeeman — enabled when zeeman_induced=true, spin_on=true, 2D, and no Peierls (self_consistent_phase=false).
-    // The adaptive RK45 evaluates the RHS with the current rho at each substep, so no predictor-corrector is needed.
-    const bool l1_zeeman = p.zeeman_induced && p.spin_on && p.two_dim && !p.xl_2D.empty() && !p.self_consistent_phase;
-    solver.zeeman_biot_savart = l1_zeeman;
-    if (l1_zeeman && !solver.self_consistent_on) {
+    // L1: Zeeman from direct Biot-Savart (Eq. 19). L2: Zeeman from curl of A_ind (Eq. 27).
+    const bool bs_zeeman = p.zeeman_induced && p.spin_on && p.two_dim && !p.xl_2D.empty();
+    solver.zeeman_biot_savart = bs_zeeman;
+    if (bs_zeeman) {
         solver.bonds     = pot.get_bonds();
         solver.points_2d = p.xl_2D;
         solver.au_mu_0   = p.au_mu_0;
@@ -837,6 +1078,26 @@ MatrixC evolve_rho_over_time( const MatrixC &rho_initial_l, const MatrixC &Hc, P
     RhoObserver observer(N_sites, history, &solver, 200,
                          p.use_strict_solver ? &t_uniform : nullptr,
                          p.use_strict_solver ? &out_idx : nullptr);
+
+    // Wire up streaming file pointers
+    observer.f_J_bond_zeeman  = f_J_bond_zeeman;
+    observer.f_B_ind_z_zeeman = f_B_ind_z_zeeman;
+    observer.f_J_bond_sc      = f_J_bond_sc;
+    observer.f_B_ind_z_sc     = f_B_ind_z_sc;
+    observer.f_B_ind_z_curl   = f_B_ind_z_curl;
+    observer.f_A_ind          = f_A_ind;
+    observer.f_rho_diag       = f_rho_diag;
+    observer.f_rho_full       = f_rho_full;
+    observer.f_spin_diag      = f_spin_diag;
+    observer.f_J_spin_bond    = f_J_spin_bond;
+
+    // Wire up online dipole references (enables hist.dipole_t accumulation)
+    if (rho0_diag_online && rho0_diag_online->size() == N_sites) {
+        observer.rho0_diag_ref = *rho0_diag_online;
+        observer.xl_x_ref      = xl_x_online ? *xl_x_online : Eigen::VectorXd::Zero(N_sites);
+        observer.e_charge_ref = e_charge_online;
+        observer.spin_on_ref   = spin_on_online;
+    }
 
     if(p.use_strict_solver) {
         typedef runge_kutta_dopri5<state_type> strict_stepper;

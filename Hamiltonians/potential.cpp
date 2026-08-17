@@ -103,6 +103,35 @@ double Potential::vvR(double R) const{
     
 }
 
+// Ohno interpolation formula — analytic alternative to the vvR fit.
+//
+//     V(r_ij) = e^2 / sqrt( (e^2 / U_0)^2 + r_ij^2 )
+//
+// r_ij is the spatial separation between carbon lattice sites i and j. The
+// quantity e^2/U_0 is a LENGTH: the softening radius that regularises the bare
+// 1/r divergence, set so that the r -> 0 limit is exactly the onsite value U_0.
+//
+// Units, exactly as for vvR(): r in BOHR (input), return value in HARTREE. In
+// atomic units e^2 = 1, so the softening length is simply 1/U_0 with U_0 the
+// onsite value in HARTREE. Limits:
+//   * V(0)      = U_0 exactly;
+//   * r -> inf  gives V -> e^2/r, the unscreened Coulomb tail that vvR() also
+//     has above 19.75 a0.
+double Potential::vvR_ohno(double R, double U) const {
+    const double r0 = 1.0 / U;              // e^2/U_0 in a.u. — the softening length
+    return 1.0 / std::sqrt(r0 * r0 + R * R);
+}
+
+// Active-kernel dispatcher. R in BOHR, return value in HARTREE.
+// Everything that needs a Coulomb matrix element — build_coulomb_matrix() and
+// the Hubbard onsite U = v(0) in main.cpp — must call this, never a specific
+// kernel, so the two can never disagree about which kernel is in use.
+double Potential::v_kernel(double R) const {
+    if (p.coulomb_kernel == "ohno")
+        return vvR_ohno(R, p.ohno_U);
+    return vvR(R);
+}
+
 Eigen::MatrixXd Potential::build_coulomb_matrix() const {
     Eigen::MatrixXd V = Eigen::MatrixXd::Zero(p.N, p.N);
 
@@ -111,7 +140,10 @@ Eigen::MatrixXd Potential::build_coulomb_matrix() const {
         for (int j = 0; j < p.N; j++) {
 
             if (i == j) {
-                V(i, j) = vvR(0.0); //p.coulomb_onsite_eV/p.au_eV;//vvR(0.0);
+                // Onsite element v_ll. With the Hubbard on this IS the Hubbard U and
+                // main.cpp retunes it if hubbard_U_eV overrides U, so the identity
+                // U = v_ll holds and the onsite Coulomb is counted exactly once.
+                V(i, j) = v_kernel(0.0);
                 continue;
             }
 
@@ -124,7 +156,7 @@ Eigen::MatrixXd Potential::build_coulomb_matrix() const {
                 R = std::abs(p.xl_1D[i] - p.xl_1D[j]);
             }
 
-            V(i, j) = vvR(R);
+            V(i, j) = v_kernel(R);
         }
     }
 

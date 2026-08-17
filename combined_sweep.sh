@@ -13,24 +13,34 @@
 #   ./combined_sweep.sh configs/graphene_armchair.toml
 #
 # Output files:
-#   sigma_mu_<formation>_<Nx>x<Ny>_rot<angle>.txt
-#       columns: mu  freq  sigma_L0  sigma_L1  sigma_L2  diff_L1  diff_L2
-#
-#   gauge_metrics_mu_<formation>_<Nx>x<Ny>_rot<angle>.txt
+#   data/gauge_metrics_mu_<formation>_<formation_shape>_<Nx>x<Ny>_rot<angle>.txt
 #       columns: mu  level  corr_flux  alpha_flux  mean_rel_peak  max_rel_peak
 #                mean_ratio_peak  rms_flux_peak  dynamic_range  mean_rel_curl_peak
+#
+#   data/sweep_data_mu_.../
+#       lattice_points.txt          (once, top-level)
+#       L{0,1,2}_mu_<mu>/sigma_ext.txt   (and other per-level files)
 
 NCPU=$(nproc)
+AVAIL_MEM_GB=$(awk '/MemAvailable/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 OMP_NUM_THREADS=1
 MKL_NUM_THREADS=1
 export OMP_NUM_THREADS MKL_NUM_THREADS
 
-MAX_JOBS=$((NCPU / OMP_NUM_THREADS))
+: "${MEM_PER_JOB_GB:=1}"
+: "${LEVELS:=L0 L1 L2}"
+: "${APPEND_GAUGE:=0}"
+CPU_JOBS=$(( (NCPU ) / OMP_NUM_THREADS)) # divid by 2 (NCPU / 2) on ucloud
+MAX_JOBS_MEM=15 #$(( (AVAIL_MEM_GB * 95 / 100) / MEM_PER_JOB_GB ))
+[ "$MAX_JOBS_MEM" -lt 1 ] && MAX_JOBS_MEM=1
+MAX_JOBS=$(( CPU_JOBS < MAX_JOBS_MEM ? CPU_JOBS : MAX_JOBS_MEM ))
 [ "$MAX_JOBS" -lt 1 ] && MAX_JOBS=1
 
 echo "Detected $NCPU CPU threads"
+echo "Available RAM: ${AVAIL_MEM_GB} GB  (MEM_PER_JOB_GB=${MEM_PER_JOB_GB})"
 echo "Using $OMP_NUM_THREADS threads per simulation"
-echo "Running up to $MAX_JOBS simulations in parallel"
+echo "Running up to $MAX_JOBS simulations in parallel (RAM cap: $MAX_JOBS_MEM, CPU cap: $CPU_JOBS)"
+echo "Active levels: $LEVELS"
 
 BASE_CONFIG=$1
 
@@ -40,41 +50,53 @@ if [ -z "$BASE_CONFIG" ]; then
 fi
 
 formation=$(grep '^\s*formation\b' "$BASE_CONFIG" | grep -v 'formation_shape' | awk -F'"' '{print $2}' | tr -d '\r')
+formation_shape=$(grep '^\s*formation_shape' "$BASE_CONFIG" | awk -F'"' '{print $2}' | tr -d '\r')
 size_x=$(   grep '^\s*size_x'             "$BASE_CONFIG" | awk -F'=' '{print $2}' | tr -d ' \t\r')
 size_y=$(   grep '^\s*size_y'             "$BASE_CONFIG" | awk -F'=' '{print $2}' | tr -d ' \t\r')
 rotation=$( grep '^\s*rotation_angle_deg' "$BASE_CONFIG" | awk -F'=' '{print $2}' | tr -d ' \t\r')
 
-# Abort early if any field came out empty so the filenames are not silently broken
-if [ -z "$formation" ] || [ -z "$size_x" ] || [ -z "$size_y" ] || [ -z "$rotation" ]; then
+# Freeze the config into a private temp file so that concurrent sweeps sharing
+# the same config file cannot corrupt each other's per-mu jobs via a race condition.
+FROZEN_CONFIG=$(mktemp --suffix=.toml)
+cp "$BASE_CONFIG" "$FROZEN_CONFIG"
+BASE_CONFIG="$FROZEN_CONFIG"
+
+if [ -z "$formation" ] || [ -z "$formation_shape" ] || [ -z "$size_x" ] || [ -z "$size_y" ] || [ -z "$rotation" ]; then
     echo "ERROR: could not extract one or more config fields from $BASE_CONFIG"
-    echo "  formation='$formation'  size_x='$size_x'  size_y='$size_y'  rotation='$rotation'"
+    echo "  formation='$formation'  formation_shape='$formation_shape'  size_x='$size_x'  size_y='$size_y'  rotation='$rotation'"
     echo "  Run:  cat -A \"$BASE_CONFIG\" | grep -E 'formation|size_x|size_y|rotation_angle_deg'"
     echo "  to inspect the actual characters in those lines."
     exit 1
 fi
 
-SIGMA_FILE="sigma_mu_${formation}_${size_x}x${size_y}_rot${rotation}.txt"
-GAUGE_FILE="gauge_metrics_mu_${formation}_${size_x}x${size_y}_rot${rotation}.txt"
-TS_DIR="gauge_ts_mu_${formation}_${size_x}x${size_y}_rot${rotation}"
+if [ -d "/work/Home/scr/data_LLM" ]; then
+    DATA_DIR="/work/Home/scr/data_LLM"
+else
+    DATA_DIR="data_LLM"
+fi
+mkdir -p "$DATA_DIR"
 
-# Remove old output files and any leftover per-job temp files
-rm -f "$SIGMA_FILE" "$GAUGE_FILE"
-rm -f "${SIGMA_FILE}".mu_* "${GAUGE_FILE}".mu_*
-rm -rf "$TS_DIR"
-mkdir -p "$TS_DIR"
+GAUGE_FILE="$DATA_DIR/gauge_metrics_mu_${formation}_${formation_shape}_${size_x}x${size_y}_rot${rotation}.txt"
+TS_DIR="$DATA_DIR/gauge_ts_mu_${formation}_${formation_shape}_${size_x}x${size_y}_rot${rotation}"
+SWEEP_DIR="$DATA_DIR/sweep_data_mu_${formation}_${formation_shape}_${size_x}x${size_y}_rot${rotation}"
 
-echo "# mu freq sigma_L0 sigma_L1 sigma_L2 diff_L1 diff_L2" > "$SIGMA_FILE"
-echo "# mu level corr_flux alpha_flux mean_rel_peak max_rel_peak mean_ratio_peak rms_flux_peak dynamic_range mean_rel_curl_peak" > "$GAUGE_FILE"
+rm -f "${GAUGE_FILE}".mu_*
+if [ "$APPEND_GAUGE" != "1" ]; then
+    rm -f "$GAUGE_FILE"
+    rm -rf "$TS_DIR" "$SWEEP_DIR"
+    echo "# mu level corr_flux alpha_flux mean_rel_peak max_rel_peak mean_ratio_peak rms_flux_peak dynamic_range mean_rel_curl_peak" > "$GAUGE_FILE"
+fi
+mkdir -p "$TS_DIR" "$SWEEP_DIR"
+
+trap 'rm -f "${GAUGE_FILE}".mu_* "$FROZEN_CONFIG"' EXIT
 
 echo "Starting combined mu sweep using $BASE_CONFIG"
-echo "Sigma output : $SIGMA_FILE"
-echo "Gauge output : $GAUGE_FILE"
+echo "Gauge output  : $GAUGE_FILE"
 echo "Timeseries dir: $TS_DIR"
+echo "Sweep data dir: $SWEEP_DIR"
 echo ""
 
-# ---------- Helper: run one sim level and return its output dir ----------
-# Usage: run_level <tmp_config> <output_var_name>
-# Prints the output directory path to stdout, or empty string on failure.
+# ---------- Helper: run one sim and return its output dir ----------
 run_sim() {
     local cfg=$1
     local out
@@ -91,121 +113,132 @@ run_mu() {
     local tmp
     tmp=$(mktemp --suffix=.toml)
 
-    local sigma_L0 sigma_L1 sigma_L2
-    sigma_L0=$(mktemp)
-    sigma_L1=$(mktemp)
-    sigma_L2=$(mktemp)
-
-    local sigma_job="${SIGMA_FILE}.mu_${mu}"
     local gauge_job="${GAUGE_FILE}.mu_${mu}"
 
     # ------------------------------------------------------------------ L0
-    # Electrostatic baseline: spin off, no zeeman, no self-consistent phase
-    sed -e "s/^mu *= *.*/mu = $mu/" \
-        -e "s/spin_on *= *true/spin_on = false/" \
-        -e "s/zeeman_induced *= *true/zeeman_induced = false/" \
-        -e "s/zeeman_external *= *true/zeeman_external = false/" \
-        -e "s/self_consistent_phase *= *true/self_consistent_phase = false/" \
-        "$BASE_CONFIG" > "$tmp"
+    if echo "$LEVELS" | grep -qw "L0"; then
+        sed -e "s/^mu *= *.*/mu = $mu/" \
+            -e "s/spin_on *= *true/spin_on = false/" \
+            -e "s/zeeman_induced *= *true/zeeman_induced = false/" \
+            -e "s/zeeman_external *= *true/zeeman_external = false/" \
+            -e "s/self_consistent_phase *= *true/self_consistent_phase = false/" \
+            "$BASE_CONFIG" > "$tmp"
 
-    local dir
-    dir=$(run_sim "$tmp")
-    if [ -n "$dir" ] && [ -d "$dir" ]; then
-        cp "$dir/sigma_ext.txt" "$sigma_L0"
-        if [ "$do_gauge" = "1" ]; then
-            local m
-            m=$(python3 ploting/gauge_batch.py "$dir" 2>/dev/null)
-            [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
-            echo "$mu L0 $m" >> "$gauge_job"
-            MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
-            local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
-            [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L0_mu_${mu}.txt"
+        local dir
+        dir=$(run_sim "$tmp")
+        if [ -n "$dir" ] && [ -d "$dir" ]; then
+            if [ "$do_gauge" = "1" ]; then
+                local m
+                m=$(python3 ploting/gauge_batch.py "$dir" 2>>"${GAUGE_FILE%.txt}.log")
+                [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
+                echo "$mu L0 $m" >> "$gauge_job"
+                MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
+                local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
+                [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L0_mu_${mu}.txt"
+            fi
+            local dest_L0="${SWEEP_DIR}/L0_mu_${mu}"
+            mkdir -p "$dest_L0"
+            # Save lattice_points.txt and bond_indices.txt once at the top level of SWEEP_DIR
+            [ -f "$dir/lattice_points.txt" ] && [ ! -f "$SWEEP_DIR/lattice_points.txt" ] && \
+                cp "$dir/lattice_points.txt" "$SWEEP_DIR/"
+            [ -f "$dir/bond_indices.txt" ] && [ ! -f "$SWEEP_DIR/bond_indices.txt" ] && \
+                cp "$dir/bond_indices.txt" "$SWEEP_DIR/"
+            for f in sigma_ext.txt J_bond_time_evolution.txt \
+                      B_ind_z_time_evolution.txt current_time_evolution.txt \
+                      spin_current_time_evolution.txt bond_indices.txt; do
+                [ -f "$dir/$f" ] && cp "$dir/$f" "$dest_L0/"
+            done
+            rm -rf "$dir"
+        else
+            echo "WARNING: no L0 dir for mu=$mu" >&2
+            [ "$do_gauge" = "1" ] && echo "$mu L0 nan nan nan nan nan nan nan nan" >> "$gauge_job"
         fi
-        rm -rf "$dir"
-    else
-        echo "WARNING: no L0 dir for mu=$mu" >&2
-        touch "$sigma_L0"
-        [ "$do_gauge" = "1" ] && echo "$mu L0 nan nan nan nan nan nan nan nan" >> "$gauge_job"
     fi
 
     # ------------------------------------------------------------------ L1
-    # Add induced Zeeman correction; Peierls phase still off
-    sed -e "s/^mu *= *.*/mu = $mu/" \
-        -e "s/spin_on *= *false/spin_on = true/" \
-        -e "s/zeeman_induced *= *false/zeeman_induced = true/" \
-        -e "s/zeeman_external *= *true/zeeman_external = false/" \
-        -e "s/self_consistent_phase *= *true/self_consistent_phase = false/" \
-        "$BASE_CONFIG" > "$tmp"
+    if echo "$LEVELS" | grep -qw "L1"; then
+        sed -e "s/^mu *= *.*/mu = $mu/" \
+            -e "s/spin_on *= *false/spin_on = true/" \
+            -e "s/zeeman_induced *= *false/zeeman_induced = true/" \
+            -e "s/zeeman_external *= *true/zeeman_external = false/" \
+            -e "s/self_consistent_phase *= *true/self_consistent_phase = false/" \
+            "$BASE_CONFIG" > "$tmp"
 
-    dir=$(run_sim "$tmp")
-    if [ -n "$dir" ] && [ -d "$dir" ]; then
-        cp "$dir/sigma_ext.txt" "$sigma_L1"
-        if [ "$do_gauge" = "1" ]; then
-            local m
-            m=$(python3 ploting/gauge_batch.py "$dir" 2>/dev/null)
-            [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
-            echo "$mu L1 $m" >> "$gauge_job"
-            MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
-            local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
-            [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L1_mu_${mu}.txt"
+        local dir
+        dir=$(run_sim "$tmp")
+        if [ -n "$dir" ] && [ -d "$dir" ]; then
+            if [ "$do_gauge" = "1" ]; then
+                local m
+                m=$(python3 ploting/gauge_batch.py "$dir" 2>>"${GAUGE_FILE%.txt}.log")
+                [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
+                echo "$mu L1 $m" >> "$gauge_job"
+                MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
+                local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
+                [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L1_mu_${mu}.txt"
+            fi
+            local dest_L1="${SWEEP_DIR}/L1_mu_${mu}"
+            mkdir -p "$dest_L1"
+            for f in sigma_ext.txt J_bond_time_evolution.txt \
+                      B_ind_z_time_evolution.txt current_time_evolution.txt \
+                      spin_current_time_evolution.txt bond_indices.txt; do
+                [ -f "$dir/$f" ] && cp "$dir/$f" "$dest_L1/"
+            done
+            rm -rf "$dir"
+        else
+            echo "WARNING: no L1 dir for mu=$mu" >&2
+            [ "$do_gauge" = "1" ] && echo "$mu L1 nan nan nan nan nan nan nan nan" >> "$gauge_job"
         fi
-        rm -rf "$dir"
-    else
-        echo "WARNING: no L1 dir for mu=$mu" >&2
-        touch "$sigma_L1"
-        [ "$do_gauge" = "1" ] && echo "$mu L1 nan nan nan nan nan nan nan nan" >> "$gauge_job"
     fi
 
     # ------------------------------------------------------------------ L2
-    # Full physics: induced Zeeman + induced Peierls phase (self-consistent)
-    sed -e "s/^mu *= *.*/mu = $mu/" \
-        -e "s/spin_on *= *false/spin_on = true/" \
-        -e "s/zeeman_induced *= *false/zeeman_induced = true/" \
-        -e "s/zeeman_external *= *true/zeeman_external = false/" \
-        -e "s/self_consistent_phase *= *false/self_consistent_phase = true/" \
-        "$BASE_CONFIG" > "$tmp"
+    if echo "$LEVELS" | grep -qw "L2"; then
+        sed -e "s/^mu *= *.*/mu = $mu/" \
+            -e "s/spin_on *= *false/spin_on = true/" \
+            -e "s/zeeman_induced *= *false/zeeman_induced = true/" \
+            -e "s/zeeman_external *= *true/zeeman_external = false/" \
+            -e "s/self_consistent_phase *= *false/self_consistent_phase = true/" \
+            "$BASE_CONFIG" > "$tmp"
 
-    dir=$(run_sim "$tmp")
-    if [ -n "$dir" ] && [ -d "$dir" ]; then
-        cp "$dir/sigma_ext.txt" "$sigma_L2"
-        if [ "$do_gauge" = "1" ]; then
-            local m
-            m=$(python3 ploting/gauge_batch.py "$dir" 2>/dev/null)
-            [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
-            echo "$mu L2 $m" >> "$gauge_job"
-            MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
-            local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
-            [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L2_mu_${mu}.txt"
+        local dir
+        dir=$(run_sim "$tmp")
+        if [ -n "$dir" ] && [ -d "$dir" ]; then
+            if [ "$do_gauge" = "1" ]; then
+                local m
+                m=$(python3 ploting/gauge_batch.py "$dir" 2>>"${GAUGE_FILE%.txt}.log")
+                [ -z "$m" ] && m="nan nan nan nan nan nan nan nan"
+                echo "$mu L2 $m" >> "$gauge_job"
+                MPLBACKEND=Agg python3 ploting/gauge_comparison.py "$dir" &>/dev/null
+                local ts="$dir/gauge_plots/flux_comparison_timeseries.txt"
+                [ -f "$ts" ] && cp "$ts" "${TS_DIR}/L2_mu_${mu}.txt"
+            fi
+            local dest_L2="${SWEEP_DIR}/L2_mu_${mu}"
+            mkdir -p "$dest_L2"
+            # For L2 use self-consistent bond currents (Eq. 16) and curl(A_ind) Zeeman B
+            [ -f "$dir/J_bond_sc_time_evolution.txt" ] && \
+                cp "$dir/J_bond_sc_time_evolution.txt" "$dest_L2/J_bond_time_evolution.txt"
+            [ -f "$dir/B_ind_z_curl_time_evolution.txt" ] && \
+                cp "$dir/B_ind_z_curl_time_evolution.txt" "$dest_L2/B_ind_z_time_evolution.txt"
+            for f in sigma_ext.txt J_bond_sc_time_evolution.txt \
+                      B_ind_z_sc_time_evolution.txt B_ind_z_curl_time_evolution.txt \
+                      current_time_evolution.txt spin_current_time_evolution.txt \
+                      bond_indices.txt; do
+                [ -f "$dir/$f" ] && cp "$dir/$f" "$dest_L2/"
+            done
+            rm -rf "$dir"
+        else
+            echo "WARNING: no L2 dir for mu=$mu" >&2
+            [ "$do_gauge" = "1" ] && echo "$mu L2 nan nan nan nan nan nan nan nan" >> "$gauge_job"
         fi
-        rm -rf "$dir"
-    else
-        echo "WARNING: no L2 dir for mu=$mu" >&2
-        touch "$sigma_L2"
-        [ "$do_gauge" = "1" ] && echo "$mu L2 nan nan nan nan nan nan nan nan" >> "$gauge_job"
     fi
 
-    # ------------------------------------------------------------------ sigma merge
-    local nl0 nl1 nl2
-    nl0=$(wc -l < "$sigma_L0")
-    nl1=$(wc -l < "$sigma_L1")
-    nl2=$(wc -l < "$sigma_L2")
-
-    if [ "$nl0" -eq "$nl1" ] && [ "$nl0" -eq "$nl2" ] && [ "$nl0" -gt 0 ]; then
-        # columns: freq  s_L0  s_L1  s_L2  diff_L1(=L0-L1)  diff_L2(=L0-L2)
-        paste "$sigma_L0" "$sigma_L1" "$sigma_L2" | \
-            awk -v mu="$mu" '{print mu, $1, $2, $4, $6, $2-$4, $2-$6}' > "$sigma_job"
-    else
-        echo "WARNING: skipping sigma for mu=$mu (line counts: L0=$nl0 L1=$nl1 L2=$nl2)" >&2
-    fi
-
-    rm -f "$tmp" "$sigma_L0" "$sigma_L1" "$sigma_L2"
+    rm -f "$tmp"
 }
 
 export -f run_mu run_sim
-export BASE_CONFIG SIGMA_FILE GAUGE_FILE TS_DIR
+export BASE_CONFIG GAUGE_FILE TS_DIR SWEEP_DIR LEVELS APPEND_GAUGE
 
 # ---------- mu sweep ----------
-mu_values=( $(seq 2.3 0.1 3.5) )
+mu_values=( $(seq 0.0 0.04 5) )
 count=${#mu_values[@]}
 first_mu=${mu_values[0]}
 mid_mu=${mu_values[$(( (count-1)/2 ))]}
@@ -227,19 +260,14 @@ done
 
 wait
 
-# ---------- Merge per-job files into final outputs (sorted by mu) ----------
-for f in $(ls "${SIGMA_FILE}".mu_* 2>/dev/null | sort -t_ -k2 -n); do
-    cat "$f" >> "$SIGMA_FILE"
-    rm -f "$f"
-done
-
-for f in $(ls "${GAUGE_FILE}".mu_* 2>/dev/null | sort -t_ -k2 -n); do
+# ---------- Merge per-job gauge files into final output (sorted by mu) ----------
+for f in $(ls "${GAUGE_FILE}".mu_* 2>/dev/null | sort -V); do
     cat "$f" >> "$GAUGE_FILE"
     rm -f "$f"
 done
 
 echo ""
 echo "Sweep finished."
-echo "Sigma results : $SIGMA_FILE"
 echo "Gauge results : $GAUGE_FILE"
 echo "Timeseries    : $TS_DIR/"
+echo "Sweep data    : $SWEEP_DIR/  (L{0,1,2}_mu_<mu>/ per mu value)"

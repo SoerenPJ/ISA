@@ -5,6 +5,7 @@
 #include <set>
 #include <utility>
 #include <cstdint>
+#include <iostream>
 
 static std::string lower_ascii(std::string s)
 {
@@ -287,14 +288,83 @@ void Params::load_from_toml(const std::string& filename)
     fourier_dt_fs  = tbl["analysis"]["fourier_dt_fs"].value_or(0.005);
     run_sigma_ext  = tbl["analysis"]["run_sigma_ext"].value_or(false);
     run_dipole_acc = tbl["analysis"]["run_dipole_acc"].value_or(false);
+    save_rho_full  = tbl["analysis"]["save_rho_full"].value_or(false);
+    save_spin_diag = tbl["analysis"]["save_spin_diag"].value_or(false);
     T                 = tbl["thermo"]["T"].value_or(0.001);
     use_charge_doping = tbl["thermo"]["use_charge_doping"].value_or(false);
     Q_doping          = tbl["thermo"]["Q_doping"].value_or(0.0);
     coulomb_on            = tbl["features"]["coulomb"].value_or(true);
-    coulomb_onsite_eV     = tbl["features"]["coulomb_onsite_eV"].value_or(5.0);
+    // Coulomb kernel selection. Default "vvR" keeps the ab-initio fit, so an old
+    // config that never mentions the key behaves exactly as before.
+    coulomb_kernel        = tbl["features"]["coulomb_kernel"].value_or(std::string("vvR"));
+    // Ohno onsite U_0 for V(r) = e^2/sqrt((e^2/U_0)^2 + r^2). The TOML gives it in
+    // eV (like t1/t2/mu/gamma and hubbard_U_eV); the member is in HARTREE, the unit
+    // the kernel and the rest of the pipeline work in.
+    if (auto u_eV = tbl["features"]["ohno_U_eV"].value<double>()) {
+        ohno_U = *u_eV / au_eV;
+    } else if (auto u_ha = tbl["features"]["ohno_U"].value<double>()) {
+        // Deprecated spelling, in HARTREE. Honoured as Hartree so old configs still
+        // reproduce — reading it as eV would be a silent factor-27 error.
+        ohno_U = *u_ha;
+        std::cerr << "[params] WARNING: [features] ohno_U is deprecated and is read as "
+                     "HARTREE (" << *u_ha << " Ha = " << *u_ha * au_eV << " eV). "
+                     "Use ohno_U_eV instead, which is in eV.\n";
+    } else {
+        ohno_U = 0.5777610;   // vvR(0) in HARTREE, exactly (= 15.7216761 eV)
+    }
+    // ohno_eps is gone: the kernel is V(r) = e^2/sqrt((e^2/U_0)^2 + r^2), which has
+    // no screening parameter. A leftover ohno_eps in an old config is ignored.
+    if (tbl["features"]["ohno_eps"])
+        std::cerr << "[params] WARNING: [features] ohno_eps is no longer used and is "
+                     "ignored (the Ohno kernel has no screening parameter).\n";
+    if (coulomb_kernel != "vvR" && coulomb_kernel != "ohno") {
+        std::cerr << "[params] ERROR: [features] coulomb_kernel = \"" << coulomb_kernel
+                  << "\" is not a known kernel (expected \"vvR\" or \"ohno\"). "
+                     "Falling back to \"vvR\".\n";
+        coulomb_kernel = "vvR";
+    }
+    hubbard              = tbl["features"]["hubbard"].value_or(false);
+    // Unset (or negative) => fall back to the onsite Coulomb v(0) of the active
+    // kernel (see coulomb_kernel), resolved in main.cpp.
+    hubbard_U_eV          = tbl["features"]["hubbard_U_eV"].value_or(-1.0);
+    // coulomb_kernel = "ohno": ohno_U_eV IS the onsite V(0), so it is the ONLY thing
+    // that may set U. hubbard_U_eV would override the onsite after the fact and leave
+    // V_ee a HYBRID — Ohno tail for one U_0, diagonal pinned to another — which is not
+    // any single kernel (measured: diagonal 15.7217 eV against an off-diagonal implying
+    // 16.7999 eV). That mismatch moved the SCF onto a 0.033 eV saddle branch, and the
+    // saddle's imaginary-frequency TDHF root grew the driven dipole 13x after the pulse
+    // and filled sigma_ext with negative gain (range [-61.7, 57.0]).
+    // Clearing the override makes main.cpp take U = pot.v_kernel(0.0) = ohno_U and skip
+    // the V_ee diagonal retune, so V_ee stays one self-consistent kernel.
+    // The vvR kernel is untouched: hubbard_U_eV remains the intended knob there, and
+    // hubbard_U_sweep.sh scans exactly that.
+    if (coulomb_kernel == "ohno" && hubbard_U_eV >= 0.0) {
+        std::cerr << "[params] NOTE: coulomb_kernel = \"ohno\" — ignoring [features] "
+                     "hubbard_U_eV = " << hubbard_U_eV << " eV. The onsite U comes from "
+                     "ohno_U_eV = " << ohno_U * au_eV << " eV, the kernel's own V(0).\n";
+        hubbard_U_eV = -1.0;
+    }
+    hubbard_seed          = tbl["features"]["hubbard_seed"].value_or(0.5);
+    hubbard_mix           = tbl["features"]["hubbard_mix"].value_or(0.3);
+    hubbard_max_iter      = tbl["features"]["hubbard_max_iter"].value_or(50000);
+    hubbard_tol           = tbl["features"]["hubbard_tol"].value_or(1e-8);
+    hubbard_hartree       = tbl["features"]["hubbard_hartree"].value_or(false);
+    hubbard_mu_filling    = tbl["features"]["hubbard_mu_filling"].value_or(false);
+    hubbard_fd_fill       = tbl["features"]["hubbard_fd_fill"].value_or(true);
+    hubbard_smear_T       = tbl["features"]["hubbard_smear_T"].value_or(-1.0);
+    hartree_scf           = tbl["features"]["hartree_scf"].value_or(false);
+    // hartree_scf is ignored when hubbard = true: the Hubbard already owns the onsite
+    // Coulomb channel (as U). Set hubbard = false for the Hubbard-free full-V_ee
+    // Hartree ground state.
+    if (hartree_scf && hubbard) hartree_scf = false;
     self_consistent_phase = tbl["features"]["self_consistent_phase"].value_or(true);
+    peierls_induced       = tbl["features"]["peierls_induced"].value_or(false);
     zeeman_external       = tbl["features"]["zeeman_external"].value_or(true);
     zeeman_induced        = tbl["features"]["zeeman_induced"].value_or(true);
+
+    // coulomb_onsite_eV is deliberately NOT read: the onsite Coulomb is vvR(0) (and,
+    // with the Hubbard on, the Hubbard U, which hubbard_U_eV overrides). Configs still
+    // carry the key, but it does nothing.
 }
 
 void Params::finalize()

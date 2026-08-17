@@ -41,3 +41,5 @@ coulomb_onsite_eV = 10.0
 self_consistent_phase = false
 zeeman_external = false
 zeeman_induced = false
+# --- Hubbard magnetism (requires spin_on = true); see HUBBARD_FEATURE.md ---
+# hubbard = false            # self-consistent UHF magnetic ground state

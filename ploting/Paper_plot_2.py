@@ -1,182 +1,243 @@
+"""
+plot_spin_ratio_paper.py
+========================
+Single-panel paper-ready figure: spin-to-charge ratio
+|J_s(omega)|^2 / |J(omega)|^2 for all four graphene nanostructures.
+
+Uses trapezoidal DFT matching the C++ compute_dipole_acceleration,
+handling non-uniform (adaptive RK45) time grids correctly.
+
+Style matches biot_savart_zdecay_paper.py exactly.
+"""
+
+import os
+import re
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.collections as mc
-from matplotlib.colors import Normalize
-import matplotlib.cm as cm
-from scipy.spatial import cKDTree
 
-au_eV  = 27.2114
-au_nm  = 0.0529177
+# ============================================================
+#  UNITS
+# ============================================================
+AU_EV = 27.2114
+AU_NM = 0.0529177
 
+# ============================================================
+#  USER SETTINGS
+# ============================================================
+STRUCTURES = [
+    {
+        "sweep_dir": "/home/soeren/University/masters/2.semester/ISA/data_LLM/sweep_data_mu_armchair_bowtie_10x10_rot0",
+        "mu": 3.36, "level": "L2",
+        "label": r"AC Bowtie",
+    },
+    {
+        "sweep_dir": "/home/soeren/University/masters/2.semester/ISA/data_LLM/sweep_data_mu_zigzag_bowtie_15x15_rot90",
+        "mu": 3.52, "level": "L2",
+        "label": r"ZZ Bowtie",
+    },
+    {
+        "sweep_dir": "/home/soeren/University/masters/2.semester/ISA/data_LLM/sweep_data_mu_armchair_triangle_14x14_rot0",
+        "mu": 3.52, "level": "L2",
+        "label": r"AC Triangle",
+    },
+    {
+        "sweep_dir": "/home/soeren/University/masters/2.semester/ISA/data_LLM/sweep_data_mu_zigzag_triangle_22x22_rot90",
+        "mu": 3.52, "level": "L2",
+        "label": r"ZZ Triangle",
+    },
+]
+
+# Match z-decay figure colors: dark blue, mid blue, dark red, bright red
+COLORS  = ['#08306b', '#2171b5', '#cb181d', '#a50f15']
+MARKERS = ['o', 's', '^', 'D']
+
+# Frequency grid resolution — matches sigma_ext grid from file
+N_OMEGA = 500   # points between 0.05 eV and 1.5 * resonance
+
+# ============================================================
+#  STYLE — identical to z-decay figure
+# ============================================================
 plt.rcParams.update({
-    "text.usetex": True,
-    "font.size": 14,
-    "axes.titlesize": 15,
-    "axes.labelsize": 14,
+    "text.usetex":     True,
+    "font.family":     "Times new roman",
+    "font.size":       9,
+    "axes.titlesize":  9,
+    "axes.labelsize":  9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "legend.fontsize": 7,
+    "lines.linewidth": 1.5,
+    "xtick.direction": "in",
+    "ytick.direction": "in",
 })
 
-# ----------------------------------------------------------------
-# Load data 
-#graphene_armchair_1c2ccdd8d66aba19
-# ----------------------------------------------------------------
-#path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_14f441d4fe6c1d6b" #dipole_acc here
-path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_zigzag_726df5e8c662a269"
-#path = "/home/soeren/University/masters/2.semester/ISA/scr/Simulations/graphene_armchair_1c2ccdd8d66aba19"
-lattice  = np.loadtxt(f"{path}/lattice_points.txt")
+# ============================================================
+#  TRAPEZOIDAL DFT — handles non-uniform time grids
+#  Matches C++ compute_dipole_acceleration exactly:
+#    integral = trapz( arr(t) * exp(i*omega*t), t )
+#    power    = |integral|^2  summed over channels
+# ============================================================
 
-sigma    = np.loadtxt(f"{path}/sigma_ext.txt")
-#sigma = np.loadtxt(f"{path}/dipole_acc.txt") #dipole acc
-J_bond_t = np.loadtxt(f"{path}/J_bond_time_evolution.txt")
-B_ind_t  = np.loadtxt(f"{path}/B_ind_z_time_evolution.txt")
+def trapz_dft_power(t, arr, omega_eV):
+    """
+    Vectorised trapezoidal DFT for non-uniform time grid.
 
-# Build bonds from lattice points
-tree = cKDTree(lattice)
-dists, _ = tree.query(lattice, k=2)
-a_nn = dists[:, 1].min()
-bonds_raw = np.array(sorted(tree.query_pairs(r=1.0005 * a_nn)), dtype=int)
-print(f"Found {len(bonds_raw)} bonds, a_nn = {a_nn:.4f} a.u.")
+    Parameters
+    ----------
+    t        : (N_t,)       time array in a.u.
+    arr      : (N_t, N_chan) signal array
+    omega_eV : (N_omega,)   frequencies to evaluate in eV
 
-time_au = J_bond_t[:, 0]
-J_bond  = J_bond_t[:, 1:]
-B_z     = B_ind_t[:, 1:]
+    Returns
+    -------
+    power : (N_omega,)  sum of |integral|^2 over channels
+    """
+    omega_au = omega_eV / AU_EV            # (N_omega,)
+    N_t      = len(t)
+    N_omega  = len(omega_au)
+    N_chan   = arr.shape[1]
 
-# ----------------------------------------------------------------
-# Fourier transforms
-# ----------------------------------------------------------------
-dt  = time_au[1] - time_au[0]
-N_t = len(time_au)
+    # expo[w, i] = exp(i * omega_au[w] * t[i])
+    # shape: (N_omega, N_t)
+    expo = np.exp(1j * np.outer(omega_au, t))   # (N_omega, N_t)
 
-J_fft   = np.fft.rfft(J_bond, axis=0)
-freq_au = np.fft.rfftfreq(N_t, d=dt)
-freq_eV = freq_au *au_eV
+    power = np.zeros(N_omega)
+    for c in range(N_chan):
+        # integrand[w, i] = arr[i, c] * exp(i*omega*t[i])
+        integrand = expo * arr[:, c][np.newaxis, :]  # (N_omega, N_t)
 
-B_fft   = np.fft.rfft(B_z, axis=0) 
+        # trapezoidal integration along time axis for each omega
+        # np.trapz(integrand, t, axis=1) → (N_omega,)
+        integral = np.trapz(integrand, t, axis=1)    # (N_omega,)
+        power   += np.abs(integral)**2
 
-# Find plasmon resonance from sigma_ext
-omega_au     = sigma[:, 0]
-sig_vals     = sigma[:, 1]
-i_res        = np.argmax(sig_vals)
-omega_res_au = omega_au[i_res]
-omega_res_eV = omega_res_au * au_eV
-print(f"Plasmon resonance: {omega_res_eV:.3f} eV")
-
-i_freq_res = np.argmin(np.abs(freq_eV - omega_res_eV))
-print(f"Using frequency bin: {freq_eV[i_freq_res]:.3f} eV")
-
-J_res        = np.abs(J_fft[i_freq_res, :])
-B_res_signed = B_fft[i_freq_res, :].real
-
-B_max_omega = np.max(np.abs(B_fft), axis=1)
-B_rms_omega = np.sqrt(np.mean(np.abs(B_fft)**2, axis=1))
-
-# ----------------------------------------------------------------
-# Build figure
-# ----------------------------------------------------------------
-fig, axes = plt.subplots(1, 3, figsize=(22, 7))
-
-x = lattice[:, 0] * au_nm
-y = lattice[:, 1] * au_nm
-
-# ---- Panel A one: Bond current distribution ----
-'''
-ax = axes[0]
-ax.set_title(r" Bond currents $|J_{ll'}(\omega_\mathrm{res})|$")
-
-J_norm = J_res / J_res.max() if J_res.max() > 0 else J_res
-lw_max = 4.0
-lw_min = 0.2
-cmap_J = cm.plasma
-
-segments   = []
-linewidths = []
-colors     = []
-
-for b, (i, j) in enumerate(bonds_raw):
-    segments.append([(x[i], y[i]), (x[j], y[j])])
-    linewidths.append(lw_min + (lw_max - lw_min) * J_norm[b])
-    colors.append(cmap_J(J_norm[b]))
-
-lc = mc.LineCollection(segments, linewidths=linewidths, colors=colors)
-ax.add_collection(lc)
-ax.scatter(x, y, s=5, c='gray', zorder=2, alpha=0.5)
-ax.set_xlim(x.min() - 0.2, x.max() + 0.2)
-ax.set_ylim(y.min() - 0.2, y.max() + 0.2)
-ax.set_aspect('equal')
-ax.set_xlabel(r"$x$ (nm)")
-ax.set_ylabel(r"$y$ (nm)")
-
-sm_J = cm.ScalarMappable(cmap=cmap_J, norm=Normalize(0, J_res.max()))
-sm_J.set_array([])
-fig.colorbar(sm_J, ax=ax, label=r"$|J_{ll'}(\omega_\mathrm{res})|$ (a.u.)", shrink=0.8)
-'''
-# ---- Panel A: Bond current as quiver ----
-ax = axes[0]
-ax.set_title(r" Bond currents $J_{ll'}(\omega_\mathrm{res})$")
-
-# Compute current vector at each bond midpoint
-mid_x = np.array([0.5*(x[i]+x[j]) for i,j in bonds_raw])
-mid_y = np.array([0.5*(y[i]+y[j]) for i,j in bonds_raw])
-
-# Direction along bond, scaled by current magnitude
-dx = np.array([(x[j]-x[i]) for i,j in bonds_raw])
-dy = np.array([(y[j]-y[i]) for i,j in bonds_raw])
-bond_len = np.sqrt(dx**2 + dy**2)
-
-# J_res is signed here — use real part to get direction
-J_res_signed = J_fft[i_freq_res, :].real
-u = J_res_signed * dx / bond_len
-v = J_res_signed * dy / bond_len
-
-ax.quiver(mid_x, mid_y, u, v, J_res_signed,
-          cmap='seismic', scale=None, angles='xy')
-ax.scatter(x, y, s=40, c='gray', zorder=2, alpha=0.5)
-ax.set_xlim(x.min() - 0.2, x.max() + 0.2)
-ax.set_ylim(y.min() - 0.2, y.max() + 0.2)
-ax.set_aspect('equal')
-ax.set_xlabel(r"$x$ (nm)")
-ax.set_ylabel(r"$y$ (nm)")
-
-sm_J = cm.ScalarMappable(cmap='seismic',
-       norm=Normalize(-np.abs(J_res_signed).max(), np.abs(J_res_signed).max()))
-sm_J.set_array([])
-fig.colorbar(sm_J, ax=ax, label=r"$J_{ll'}(\omega_\mathrm{res})$ (a.u.)", fraction=0.046, pad=0.04)
-
-# ---- Panel B: Site-resolved B_ind_z at resonance (signed) ----
-
-ax = axes[1]
-ax.set_title(r"$B_{\mathrm{ind},z}(r_l, \omega_\mathrm{res})$")
-
-bmax = np.abs(B_res_signed).max()
-sc = ax.scatter(x, y, c=B_res_signed, cmap='seismic', s=40,
-                norm=Normalize(-bmax, bmax))
-ax.set_aspect('equal')
-ax.set_xlabel(r"$x$ (nm)")
-ax.set_ylabel(r"$y$ (nm)")
-fig.colorbar(sc, ax=ax, label=r"$B_{\mathrm{ind},z}$ (a.u.)", fraction=0.046, pad=0.04)
+    return power
 
 
-# ---- Panel C: B_max(omega) and B_rms(omega) vs sigma_ext ----
-ax  = axes[2]
-ax2 = ax.twinx()
-ax.set_title(r"Magnetic response vs.\ extinction")
+# ============================================================
+#  HELPERS
+# ============================================================
 
-omega_eV = omega_au * au_eV
-ax.plot(omega_eV, sig_vals* au_nm**2, 'b-', lw=1.5, label=r"$\sigma_\mathrm{ext}(\omega)$")
-ax.set_xlabel(r"Energy $\hbar\omega$ (eV)")
-ax.set_ylabel(r"$\sigma_\mathrm{ext}$", color='b')
-ax.tick_params(axis='y', labelcolor='b')
+def find_mu_dir(sweep_dir, level, mu):
+    pattern    = os.path.join(sweep_dir, f"{level}_mu_*")
+    candidates = sorted(glob.glob(pattern))
+    if not candidates:
+        raise FileNotFoundError(f"No dirs matching {pattern}")
+    def extract_mu(p):
+        m = re.search(r"mu_([\d.]+)$", p)
+        return float(m.group(1)) if m else np.inf
+    return min(candidates, key=lambda p: abs(extract_mu(p) - mu))
 
-mask = freq_eV <= omega_eV.max()
-ax2.plot(freq_eV[mask], B_max_omega[mask], 'r-',  lw=1.5, label=r"$B_\mathrm{max}(\omega)$")
-ax2.plot(freq_eV[mask], B_rms_omega[mask], 'r--', lw=1.5, label=r"$B_\mathrm{rms}(\omega)$")
-ax2.set_ylabel(r"$B_\mathrm{ind}$ (a.u.)", color='r')
-ax2.tick_params(axis='y', labelcolor='r')
 
-lines1, labels1 = ax.get_legend_handles_labels()
-lines2, labels2 = ax2.get_legend_handles_labels()
-ax.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc='upper left')
+def load_sigma(path):
+    d        = np.loadtxt(path, comments="#")
+    omega_eV = d[:, 0] * AU_EV
+    sig      = d[:, 1]
+    i_res    = np.argmax(sig)
+    return omega_eV, sig, omega_eV[i_res]
+
+
+# ============================================================
+#  MAIN
+# ============================================================
+fig, ax = plt.subplots(figsize=(3.4, 3.2))
+
+sigma_plotted = False
+
+for struct, color, marker in zip(STRUCTURES, COLORS, MARKERS):
+    sweep_dir = struct["sweep_dir"]
+    mu        = struct["mu"]
+    level     = struct["level"]
+    label     = struct["label"]
+
+    print(f"\n{'='*50}\n{label}")
+
+    try:
+        path = find_mu_dir(sweep_dir, level, mu)
+    except FileNotFoundError as e:
+        print(f"  [WARNING] {e}")
+        continue
+
+    # sigma_ext
+    try:
+        omega_sig, sig, res_eV = load_sigma(
+            os.path.join(path, "sigma_ext.txt"))
+        print(f"  Resonance: {res_eV:.3f} eV")
+    except Exception as e:
+        print(f"  [WARNING] sigma_ext: {e}")
+        continue
+
+    # Charge current [t, Jx, Jy]
+    try:
+        cur      = np.loadtxt(
+            os.path.join(path, "current_time_evolution.txt"),
+            comments="#")
+        t        = cur[:, 0]          # a.u., non-uniform
+        J_charge = cur[:, 1:]         # (N_t, 2)
+    except Exception as e:
+        print(f"  [WARNING] charge current: {e}")
+        continue
+
+    # Spin current [t, J↑x, J↑y, J↓x, J↓y, Js_x, Js_y]
+    sc_path    = os.path.join(path, "spin_current_sc_time_evolution.txt")
+    plain_path = os.path.join(path, "spin_current_time_evolution.txt")
+    sc_file    = sc_path if os.path.isfile(sc_path) else plain_path
+    try:
+        sc       = np.loadtxt(sc_file, comments="#")
+        N_t      = min(len(t), len(sc))
+        t        = t[:N_t]
+        J_charge = J_charge[:N_t, :]
+        J_spin   = sc[:N_t, 5:7]     # Js_x, Js_y
+    except Exception as e:
+        print(f"  [WARNING] spin current: {e}")
+        continue
+
+    # Frequency grid: plasmon region only
+    f_min   = 0.5   # eV — below lowest resonance
+    f_max   = min(omega_sig.max(), 1.5 * res_eV)
+    omega_eV = np.linspace(f_min, f_max, N_OMEGA)
+
+    print(f"  Computing trapezoidal DFT on {N_OMEGA} frequency points ...")
+    P_charge = trapz_dft_power(t, J_charge, omega_eV)
+    P_spin   = trapz_dft_power(t, J_spin,   omega_eV)
+
+    # Spin-to-charge ratio
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.where(P_charge > 0, P_spin / P_charge, np.nan)
+
+   
+
+    # Resonance marker
+    ax.axvline(res_eV, color=color, lw=2.5, ls=':', alpha=1.0, zorder=1)
+
+    # Plot ratio
+    valid = np.isfinite(ratio)
+    n_pts = valid.sum()
+    every = max(1, n_pts // 8)
+    ax.plot(omega_eV[valid], ratio[valid],
+            color=color, lw=1.5,
+            marker=marker, markevery=every, ms=4,
+            label=label, zorder=3)
+
+    print(f"  Ratio at resonance: "
+          f"{np.interp(res_eV, omega_eV[valid], ratio[valid]):.3e}")
+
+# ── Styling ───────────────────────────────────────────────────────────────
+ax.set_xlabel(r"$\hbar\omega\ (\mathrm{eV})$")
+
+ax.set_xlim(1, 3.0)
+#ax.set_yscale('log')
+ax.set_ylabel(r"$|J_s(\omega)|^2 / |J(\omega)|^2$")
+ax.set_ylim(bottom=0)
+ax.legend(framealpha=0.9, loc='upper left',
+          handlelength=1.5, handletextpad=0.5)
+ax.grid(True, ls=':', alpha=0.4, which='both')
+ax.yaxis.set_major_formatter(plt.ScalarFormatter(useMathText=True))
+ax.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
 
 plt.tight_layout()
-plt.savefig("three_panel_figure.pdf", bbox_inches='tight')
+out = "spin_ratio_paper.pdf"
+plt.savefig(out, bbox_inches='tight', dpi=300)
+print(f"\nSaved: {out}")
 plt.show()
-print("Saved three_panel_figure.pdf")

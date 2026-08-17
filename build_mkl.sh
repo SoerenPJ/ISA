@@ -28,6 +28,7 @@ g++ \
   main.cpp \
   DensityMatrix/Density.cpp \
   Hamiltonians/hamiltonian.cpp \
+  Hamiltonians/hubbard.cpp \
   Hamiltonians/potential.cpp \
   Observables/observables.cpp \
   params/params.cpp \

@@ -1,0 +1,74 @@
+# Hubbard-FREE simulation with a self-consistent Hartree ground state.
+#
+# No Hubbard U, no exchange, no magnetism. The ground state is still found
+# self-consistently, but purely from the electrons' own electrostatics, using the
+# FULL Coulomb kernel V_ee with the onsite diagonal INCLUDED:
+#
+#     phi_i = sum_j V_ee(i,j) ( n_j - 1 )        (all j, diagonal included)
+#
+# See HUBBARD_FEATURE.md §13. Note the Hartree only does something once the density
+# is pushed off n = 1: at neutrality on a bipartite flake phi vanishes identically
+# and you get the bare tight-binding ground state, so keep Q_doping != 0 (or use a
+# geometry with inequivalent sites).
+
+[system]
+lattice = "graphene"
+formation_shape = "triangle" # rectangle | triangle
+formation = "zigzag"
+size_x = 5
+size_y = 5
+rotation_angle_deg = 0
+
+# bond length (nm)
+lattice_const = 0.14210
+
+[hamiltonian]
+t1 = -2.8
+t2 = -2.8
+mu = 0.0
+gamma = 0.05
+spin_on = true
+
+[simulation]
+use_strict_solver = false
+dt = 0.01
+t0 = 0.0
+t_max = 180.0
+a_tol = 1e-10
+r_tol = 1e-8
+
+[field]
+intensity = 1e15
+mode = "ddf" #time_impulse
+phase = 0.0
+omega = 5.27
+t_shift = 250.0
+sigma_gaus = 100
+sigma_ddf = 0.01
+B_ext = false
+
+[analysis]
+save_rho_full = false     # full N^2 matrix (coherences); huge, only for Spin_matrix.py
+save_spin_diag = true     # lean spin-resolved induced diagonal for the spin-density plots
+omega_cut_off = 6
+fourier_dt_fs = 0.01
+run_sigma_ext = true
+run_dipole_acc = false
+
+[thermo]
+T = 300
+use_charge_doping = true  # if true, ignore mu for Rho_0
+Q_doping = 1.0            # total extra electrons relative to neutral
+
+[features]
+coulomb = true
+hubbard = false           # NO Hubbard: no U, no exchange, no magnetism
+hartree_scf = true        # SCF ground state from the full V_rr', onsite diagonal INCLUDED
+hubbard_mix = 0.02        # the Hubbard default 0.05 sloshes here: the retained v(0) = 15.7 eV
+                          # diagonal makes the charge channel stiff (5x5 zigzag triangle,
+                          # Q = 1: 0.05 sloshes, 0.02 converges in 729 iters)
+hubbard_max_iter = 50000
+hubbard_tol = 1e-8
+self_consistent_phase = true # L1: no induced Peierls phases; set true for L2
+zeeman_external = false
+zeeman_induced = true        # L1: Biot-Savart B_ind -> Zeeman (requires spin_on=true)

@@ -1,59 +1,136 @@
+import os
+import re
+import glob
+import sys
 import numpy as np
 from scipy.signal import find_peaks
 
+# ---------------------------------------------------------------------------
+# Extract the resonance frequency from sweep data.
+#
+# Sweep data layout (data_LLM):
+#   sweep_data_mu_<structure>/
+#       L0_mu_0.00/sigma_ext.txt
+#       L0_mu_0.04/sigma_ext.txt
+#       ...
+#       L1_mu_<value>/sigma_ext.txt
+#       L2_mu_<value>/sigma_ext.txt
+#
+# Each sigma_ext.txt has two columns:
+#   col 0 -> omega   (atomic units, Hartree)
+#   col 1 -> sigma   (extinction cross section, arb. units)
+#
+# For every chemical potential (mu) and every implementation level (L0/L1/L2)
+# the resonance frequency is the omega of the dominant peak of sigma(omega).
+# ---------------------------------------------------------------------------
+
 # constants
-au_nm = 0.0529177
+HARTREE_TO_EV = 27.2114
 
-# ---------- load sweep ----------
-input_file = "sigma_mu_armchair_8x8_rot0.txt"
-output_file = f"resonance_vs_mu_{input_file}"
-data = np.loadtxt(input_file)
+# directory holding all the sweeps
+DATA_ROOT = os.path.expanduser("~/University/masters/2.semester/ISA/scr/data_LLM")
 
-# sort (important)
-data = data[np.lexsort((data[:,1], data[:,0]))]
+# implementation levels present in the sweeps
+LEVELS = ["L0", "L1", "L2"]
 
-mu = data[:,0]
-omega = data[:,1]*27.2114
-sigma_base = data[:,2]*au_nm**2
-sigma_full = data[:,3]*au_nm**2
+# regex: L<level>_mu_<value>
+DIR_RE = re.compile(r"^(L\d+)_mu_(-?\d+(?:\.\d+)?)$")
 
-mu_unique = np.unique(mu)
 
-omega_res_base = []
-omega_res_full = []
+def resonance_frequency(omega, sigma):
+    """Return the omega of the dominant resonance peak of sigma(omega).
 
-for m in mu_unique:
+    Uses find_peaks with a prominence threshold and selects the most
+    prominent peak; falls back to the global maximum if no peak is found.
+    """
+    if sigma.size == 0 or np.max(sigma) <= 0:
+        return np.nan
 
-    mask = mu == m
+    peaks, props = find_peaks(sigma, prominence=np.max(sigma) * 0.1)
 
-    omega_slice = omega[mask]
-    sigma_base_slice = sigma_base[mask]
-    sigma_full_slice = sigma_full[mask]
+    if peaks.size == 0:
+        # no clear peak (e.g. monotonic / flat spectrum) -> global max
+        return omega[int(np.argmax(sigma))]
 
-    peaks_base,_ = find_peaks(
-        sigma_base_slice,
-        prominence=np.max(sigma_base_slice)*0.1
+    # pick the most prominent peak
+    best = peaks[int(np.argmax(props["prominences"]))]
+    return omega[best]
+
+
+def extract_sweep(sweep_dir):
+    """Build the resonance table for a single sweep directory.
+
+    Returns (mu_unique, table) where table has one column of resonance
+    frequencies (in eV) per level, in LEVELS order. Missing entries are NaN.
+    """
+    # collect resonance per (level, mu)
+    res = {lvl: {} for lvl in LEVELS}
+
+    for entry in sorted(os.listdir(sweep_dir)):
+        m = DIR_RE.match(entry)
+        if not m:
+            continue
+        level, mu_str = m.group(1), m.group(2)
+        if level not in res:
+            continue
+
+        sigma_file = os.path.join(sweep_dir, entry, "sigma_ext.txt")
+        if not os.path.isfile(sigma_file):
+            continue
+
+        data = np.loadtxt(sigma_file)
+        if data.ndim != 2 or data.shape[0] < 2:
+            continue
+
+        omega = data[:, 0] * HARTREE_TO_EV
+        sigma = data[:, 1]
+
+        res[level][float(mu_str)] = resonance_frequency(omega, sigma)
+
+    # union of all mu values across levels
+    mu_unique = np.array(
+        sorted({mu for lvl in LEVELS for mu in res[lvl]})
     )
 
-    peaks_full,_ = find_peaks(
-        sigma_full_slice,
-        prominence=np.max(sigma_full_slice)*0.1
-    )
+    table = np.full((mu_unique.size, len(LEVELS)), np.nan)
+    for j, lvl in enumerate(LEVELS):
+        for i, mu in enumerate(mu_unique):
+            if mu in res[lvl]:
+                table[i, j] = res[lvl][mu]
 
-    omega_res_base.append(omega_slice[peaks_base[0]])
-    omega_res_full.append(omega_slice[peaks_full[0]])
+    return mu_unique, table
 
-omega_res_base = np.array(omega_res_base)
-omega_res_full = np.array(omega_res_full)
 
-# ---------- save result ----------
-out = np.column_stack((mu_unique, omega_res_base, omega_res_full))
+def main():
+    # sweep directories: from argv, else every sweep_data_* dir under DATA_ROOT
+    if len(sys.argv) > 1:
+        sweep_dirs = [os.path.abspath(p) for p in sys.argv[1:]]
+    else:
+        sweep_dirs = sorted(
+            d for d in glob.glob(os.path.join(DATA_ROOT, "sweep_data_*"))
+            if os.path.isdir(d)
+        )
 
-np.savetxt(
-    output_file,
-    out,
-    header="mu omega_base omega_full",
-    fmt="%.6f"
-)
+    if not sweep_dirs:
+        print(f"No sweep directories found under {DATA_ROOT}")
+        return
 
-print("Saved resonance table:")
+    for sweep_dir in sweep_dirs:
+        name = os.path.basename(sweep_dir.rstrip("/"))
+        mu_unique, table = extract_sweep(sweep_dir)
+
+        if mu_unique.size == 0:
+            print(f"[skip] {name}: no L*_mu_* spectra found")
+            continue
+
+        out = np.column_stack((mu_unique, table))
+        output_file = os.path.join(DATA_ROOT, f"resonance_vs_mu_{name}.txt")
+
+        header = "mu  " + "  ".join(f"omega_res_{lvl}_eV" for lvl in LEVELS)
+        np.savetxt(output_file, out, header=header, fmt="%.6f")
+
+        print(f"[ok] {name}: {mu_unique.size} mu values -> {output_file}")
+
+
+if __name__ == "__main__":
+    main()

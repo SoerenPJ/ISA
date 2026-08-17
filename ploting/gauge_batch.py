@@ -85,13 +85,15 @@ def _load_lattice(sim_dir: Path):
 
 
 def _load_B_ind(sim_dir: Path):
-    path = sim_dir / "B_ind_z_time_evolution.txt"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing {path} — run with zeeman_induced=true, spin_on=true."
-        )
-    data = np.loadtxt(path)
-    return data[:, 0], data[:, 1:]
+    # Prefer the SC version (written by the same L2 block as A_ind, so time grids match).
+    for name in ("B_ind_z_sc_time_evolution.txt", "B_ind_z_time_evolution.txt"):
+        path = sim_dir / name
+        if path.exists():
+            data = np.loadtxt(path)
+            return data[:, 0], data[:, 1:]
+    raise FileNotFoundError(
+        f"Missing B_ind_z file in {sim_dir} — run with zeeman_induced=true, spin_on=true."
+    )
 
 
 def _load_A_ind(sim_dir: Path):
@@ -257,7 +259,14 @@ def compute_metrics(sim_dir: Path) -> str:
 
     if B.shape[1] != n or Ax.shape[1] != n:
         raise ValueError("Site count mismatch between lattice and field files.")
-    if len(tA) != len(tB) or not np.allclose(tA, tB, atol=1e-10):
+    if abs(len(tA) - len(tB)) > 10:
+        raise ValueError(
+            f"Time grids differ badly: A_ind has {len(tA)} rows, B_ind has {len(tB)} rows."
+        )
+    n_min = min(len(tA), len(tB))
+    tA, Ax, Ay = tA[:n_min], Ax[:n_min], Ay[:n_min]
+    tB, B      = tB[:n_min], B[:n_min]
+    if not np.allclose(tA, tB, atol=1e-6):
         raise ValueError("Time grids differ between A_ind and B_ind files.")
 
     n_t   = len(tA)

@@ -25,7 +25,18 @@ public:
 
     Eigen::VectorXd get_potential(double t, const std::string& mode) const;
 
+    // ===========================
+    // Coulomb kernels v(R)
+    // ===========================
+    // Every kernel below takes R in BOHR and returns the Coulomb matrix element
+    // in HARTREE (atomic units, e^2 = 1). Which one is active is selected by
+    // [features] coulomb_kernel in the TOML; always go through v_kernel() so the
+    // whole pipeline (kernel matrix AND the Hubbard onsite U = v(0)) sees the
+    // same choice.
     double vvR(double R) const;
+    double vvR_ohno(double R, double U) const;
+    double v_kernel(double R) const;
+
     Eigen::MatrixXd build_coulomb_matrix() const;
 
     // ===========================

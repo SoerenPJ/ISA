@@ -7,6 +7,7 @@
 #include <complex>
 #include <functional>
 #include <iostream>
+#include <fstream>
 
 using MatrixC = Eigen::Matrix<
     std::complex<double>,
@@ -26,9 +27,14 @@ struct TimeTonianSolver;   // <<< ADD THIS
 // =====================================================
 struct RhoHistory {
     std::vector<double> time;
-    std::vector<std::vector<double>> diag;   // diag[t][i] = rho_ii(t)
+    std::vector<std::vector<double>> diag;   // diag[t][i] = rho_ii(t) — only used when NOT streaming rho_diag
+    std::vector<double> dipole_t;            // scalar dipole moment per step (computed online if rho0_diag_ref set)
     std::vector<double> J_x;
     std::vector<double> J_y;
+    std::vector<double> J_up_x;
+    std::vector<double> J_up_y;
+    std::vector<double> J_dn_x;
+    std::vector<double> J_dn_y;
     // Induced vector potential per site when self_consistent_phase is on: A_ind_[xy][t][i]
     std::vector<std::vector<double>> A_ind_x;
     std::vector<std::vector<double>> A_ind_y;
@@ -52,6 +58,30 @@ struct RhoObserver {
     const std::vector<double>* t_output = nullptr;
     size_t* out_idx = nullptr;
 
+    // --- Streaming: if non-null, write directly to disk instead of accumulating in hist ---
+    // Zeeman/Biot-Savart block (L1 and L2 when zeeman_biot_savart=true)
+    std::ofstream *f_J_bond_zeeman  = nullptr;
+    std::ofstream *f_B_ind_z_zeeman = nullptr;
+    // Self-consistent block (L2 only when self_consistent_on=true)
+    std::ofstream *f_J_bond_sc      = nullptr;
+    std::ofstream *f_B_ind_z_sc     = nullptr;
+    std::ofstream *f_B_ind_z_curl   = nullptr;  // curl(A_ind): correct B for L2 Zeeman
+    std::ofstream *f_A_ind          = nullptr;
+    // rho_diag streaming (all levels)
+    std::ofstream *f_rho_diag       = nullptr;
+    // Full induced density matrix rho(t)-rho0 streaming (all elements, on output stride)
+    std::ofstream *f_rho_full       = nullptr;
+    // Spin-resolved induced diagonal rho_ii(t)-rho0_ii streaming (N_mat reals, on output stride)
+    std::ofstream *f_spin_diag      = nullptr;
+    // Per-bond spin current J^spin_{ll'} streaming (N_bonds reals, on output stride)
+    std::ofstream *f_J_spin_bond    = nullptr;
+
+    // --- Online dipole computation (avoids keeping hist.diag in RAM) ---
+    Eigen::VectorXd rho0_diag_ref;  // equilibrium site occupations (set before evolution)
+    Eigen::VectorXd xl_x_ref;       // site x-positions
+    int  e_charge_ref = 1;
+    bool spin_on_ref  = false;
+
     RhoObserver(int N_, RhoHistory &h, TimeTonianSolver *s, int stride_ = 200,
                 const std::vector<double>* t_output_ = nullptr, size_t* out_idx_ = nullptr);
 
@@ -74,8 +104,14 @@ struct TimeTonianSolver {
     MatrixC H0;
     std::function<Eigen::VectorXd(double)> get_potential;
     bool coulomb_on;
-    // Coulomb matrix in site space (N_sites × N_sites)
+    // Coulomb matrix in site space (N_sites × N_sites). V_ee is the full physical
+    // kernel v(R_ij) (used e.g. as the induced-vector-potential / current kernel).
+    // V_ee_hartree is the copy used for the density-density Hartree term: identical
+    // to V_ee, except that when the Hubbard is active its DIAGONAL IS ZEROED, since
+    // the onsite Coulomb is then carried by the Hubbard U instead (see the hubbard
+    // block in build_H_for_time).
     Eigen::MatrixXd V_ee;
+    Eigen::MatrixXd V_ee_hartree;
     // Equilibrium site occupations (size N_sites)
     Eigen::VectorXd rho0_diag;
     double e_charge;
@@ -105,6 +141,23 @@ struct TimeTonianSolver {
     MatrixC P_x;
     MatrixC P_y;
     double hbar;
+
+    // ---------- Hubbard mean field (frozen UHF exchange potential) ----------
+    // Spin-dependent onsite potential U(<n_-sigma> - 1/2). Kept out of H0 and
+    // re-added every step so it survives branches that rebuild H from hopping.
+    bool hubbard_on = false;
+    Eigen::VectorXd hub_V_up;   // size N_sites, added to the up block diagonal
+    Eigen::VectorXd hub_V_dn;   // size N_sites, added to the dn block diagonal
+    // Unified onsite Hubbard field (SSH__Spin_current-1.pdf, "New model", Eq. 25/26):
+    //   V_{iσ}(t) = U ( n_{i,-σ}(t) - 1/2 ),  a single spin-resolved onsite U.
+    // The onsite Coulomb v(0) has been removed from V_ee_hartree, so this term
+    // carries the whole onsite response. There is NO charge/spin split: the
+    // frozen equilibrium part (incl. the nonlocal Hartree φ_final) lives in
+    // hub_V_up/dn, and the live deviation U(n_{-σ}(t) - n_{-σ}^eq) is added each
+    // step. At t=0 the deviation vanishes, so rho0 stays stationary.
+    double hub_U = 0.0;         // single unified onsite U (a.u.)
+    Eigen::VectorXd hub_n_up_eq; // size N_sites, equilibrium spin-up occupation
+    Eigen::VectorXd hub_n_dn_eq; // size N_sites, equilibrium spin-dn occupation
 
     // ---------- Self-consistent induced phase (current -> A_ind -> phi_ind -> hopping) ----------
     bool self_consistent_on = false;
@@ -164,14 +217,28 @@ MatrixC Rho_0_charge(const Eigen::VectorXcd &epsilon,
                      bool spin_on);
 MatrixC rho_l_space(const Eigen::MatrixXcd &A_jl, const MatrixC &rho_j);
 
-// Evolve density matrix over time (records diagonals into history)
+// Evolve density matrix over time (records observables into history or streams to disk)
 MatrixC evolve_rho_over_time(
     const MatrixC &rho_initial_l,
     const MatrixC &Hc,
     Potential &pot,
     const std::string &mode,
     const Params &p,
-    RhoHistory &history);
+    RhoHistory &history,
+    std::ofstream *f_J_bond_zeeman  = nullptr,
+    std::ofstream *f_B_ind_z_zeeman = nullptr,
+    std::ofstream *f_J_bond_sc      = nullptr,
+    std::ofstream *f_B_ind_z_sc     = nullptr,
+    std::ofstream *f_B_ind_z_curl   = nullptr,
+    std::ofstream *f_A_ind          = nullptr,
+    std::ofstream *f_rho_diag       = nullptr,
+    std::ofstream *f_rho_full       = nullptr,
+    std::ofstream *f_spin_diag      = nullptr,
+    std::ofstream *f_J_spin_bond    = nullptr,
+    const Eigen::VectorXd *rho0_diag_online = nullptr,
+    const Eigen::VectorXd *xl_x_online      = nullptr,
+    int  e_charge_online = 1,
+    bool spin_on_online  = false);
 
 // Add Zeeman term μ_B σ·B to diagonal of H (uniform B_z). For initial H at t=0 (B_ind = 0).
 void add_Zeeman_diagonal(MatrixC& H, double B_z, int N_sites, bool spin_on, double au_mu_B);

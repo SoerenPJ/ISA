@@ -123,11 +123,11 @@ occ_eig = np.real(np.diag(rho_j_NxN))
 
 
 
-print("number of electrons j", 2*np.real(np.trace(rho_j_NxN)))
+print("number of electrons j", np.real(np.trace(rho_j_NxN)))
 
 
 
-print("number of electrons l", 2*np.real(np.trace(rho_l_NxN)))
+print("number of electrons l", np.real(np.trace(rho_l_NxN)))
 
 dipole_moments = np.loadtxt(base_dir / 'dipole_time_evolution.txt')
 dipole = np.real(dipole_moments[:,1])
@@ -225,7 +225,9 @@ def baseplots(N_sites, t, eigenvalues, rho_j_NxN, rho_l_NxN, dipole, occ_eig):#,
     print("Eigenvalues in ev: ", energies_eV)
 
     # occ_eig = occupations in eigenbasis (f_j), computed from rho_l via U^dag @ rho_l @ U
-    occ = occ_eig
+    # snap machine-eps tails to exact 0/1 so the printout is readable
+    occ = np.where(np.abs(occ_eig) < 1e-10, 0.0,
+                   np.where(np.abs(occ_eig - 1.0) < 1e-10, 1.0, occ_eig))
     print("Eigenbasis occupations:", occ)
 
     # Define "mostly filled" and "mostly empty" with a 0.5 threshold
